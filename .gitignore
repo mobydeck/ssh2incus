@@ -1,0 +1,13 @@
+.DS_*
+/.idea
+/dist
+/build
+/release
+/.go
+/server/ssh2incus-sftp-server*
+
+/ansible
+Makefile
+/cmd
+/docker*
+/scripts

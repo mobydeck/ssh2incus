@@ -1,0 +1,13 @@
+[Unit]
+Description=SSH server for Incus instances
+After=network.target
+
+[Service]
+EnvironmentFile=-/etc/default/ssh2incus
+ExecStart=/bin/ssh2incus $ARGS
+KillMode=mixed
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

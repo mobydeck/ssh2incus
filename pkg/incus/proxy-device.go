@@ -1,0 +1,195 @@
+package incus
+
+import (
+	"fmt"
+	"os"
+	"path"
+	"strconv"
+	"strings"
+	"time"
+
+	"ssh2incus/pkg/util"
+	"ssh2incus/pkg/util/buffer"
+
+	"github.com/lxc/incus/v6/client"
+	log "github.com/sirupsen/logrus"
+)
+
+type ProxyDevice struct {
+	Server   *incus.InstanceServer
+	Project  string
+	Instance string
+	Source   string
+	Uid      int
+	Gid      int
+	Mode     string
+
+	deviceName string
+	target     string
+}
+
+func (p *ProxyDevice) AddSocket() (string, error) {
+	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	if err != nil {
+		log.Errorln(err.Error())
+		return "", err
+	}
+
+	tmpDir := "/tmp"
+	p.deviceName = "incus-proxy-socket-" + strconv.FormatInt(time.Now().UnixNano(), 16) + util.RandomStringLower(5)
+	p.target = path.Join(tmpDir, p.deviceName+".sock")
+
+	_, ok := instance.Devices[p.deviceName]
+	if ok {
+		log.Errorf("device %s already exists for %s", p.deviceName, instance.Name)
+		return "", err
+	}
+
+	device := map[string]string{}
+	device["type"] = "proxy"
+	device["connect"] = "unix:" + p.Source
+	device["listen"] = "unix:" + p.target
+	device["bind"] = "instance"
+	device["mode"] = p.Mode
+	device["uid"] = strconv.Itoa(p.Uid)
+	device["gid"] = strconv.Itoa(p.Gid)
+
+	instance.Devices[p.deviceName] = device
+	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	if err != nil {
+		log.Errorln(err.Error())
+		return "", err
+	}
+
+	err = op.Wait()
+	if err != nil {
+		log.Errorln(err.Error())
+		return "", err
+	}
+
+	log.Debugf("proxy-device: added %#v for %#v", device, p)
+
+	return p.target, nil
+}
+
+func (p *ProxyDevice) RemoveSocket() {
+	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	if err != nil {
+		log.Errorln(err.Error())
+		return
+	}
+
+	device, ok := instance.Devices[p.deviceName]
+	if !ok {
+		log.Errorf("device %s does not exist for %s", p.deviceName, instance.Name)
+		return
+	}
+	delete(instance.Devices, p.deviceName)
+
+	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	if err != nil {
+		log.Errorln(err.Error())
+		return
+	}
+
+	err = op.Wait()
+	if err != nil {
+		log.Errorln(err.Error())
+	}
+
+	source := strings.TrimPrefix(device["connect"], "unix:")
+	os.RemoveAll(path.Dir(source))
+
+	target := strings.TrimPrefix(device["listen"], "unix:")
+	cmd := fmt.Sprintf("rm -f %s", target)
+	stdout := buffer.NewOutputBuffer()
+	stderr := buffer.NewOutputBuffer()
+	ie := &InstanceExec{
+		Server:   p.Server,
+		Instance: instance.Name,
+		Cmd:      cmd,
+		Stdout:   stdout,
+		Stderr:   stderr,
+	}
+	ret, err := ie.Exec()
+
+	if ret != 0 {
+		log.Errorln(err.Error())
+	}
+
+	log.Debugf("proxy-device: removed %#v", p)
+}
+
+func (p *ProxyDevice) AddPort() (string, error) {
+	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	if err != nil {
+		log.Errorln(err.Error())
+		return "", err
+	}
+
+	port, err := util.GetFreePort()
+	if err != nil {
+		log.Errorln(err.Error())
+		return "", err
+	}
+
+	p.deviceName = fmt.Sprintf("incus-proxy-port-%d", port)
+	p.target = fmt.Sprintf("%d", port)
+
+	_, ok := instance.Devices[p.deviceName]
+	if ok {
+		log.Errorf("device %s already exists for %s", p.deviceName, instance.Name)
+		return "", err
+	}
+
+	device := map[string]string{}
+	device["type"] = "proxy"
+	device["connect"] = "tcp:127.0.0.1:" + p.Source
+	device["listen"] = "tcp:127.0.0.1:" + p.target
+	device["bind"] = "host"
+
+	instance.Devices[p.deviceName] = device
+	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	if err != nil {
+		log.Errorln(err.Error())
+		return "", err
+	}
+
+	err = op.Wait()
+	if err != nil {
+		log.Errorln(err.Error())
+		return "", err
+	}
+
+	log.Debugf("proxy-device: added %#v for %#v", device, p)
+
+	return p.target, nil
+}
+
+func (p *ProxyDevice) RemovePort() {
+	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	if err != nil {
+		log.Errorln(err.Error())
+		return
+	}
+
+	_, ok := instance.Devices[p.deviceName]
+	if !ok {
+		log.Errorf("device %s does not exist for %s", p.deviceName, instance.Name)
+		return
+	}
+	delete(instance.Devices, p.deviceName)
+
+	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	if err != nil {
+		log.Errorln(err.Error())
+		return
+	}
+
+	err = op.Wait()
+	if err != nil {
+		log.Errorln(err.Error())
+	}
+
+	log.Debugf("proxy-device: removed %#v", p)
+}

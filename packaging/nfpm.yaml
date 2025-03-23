@@ -1,0 +1,37 @@
+name: ssh2incus
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: ${RELEASE}
+version_schema: none
+section: default
+priority: "extra"
+maintainer: "<mobydeck@users.noreply.github.com>"
+description: |
+  SSH server for Incus containers
+vendor: mobydeck
+homepage: https://github.com/mobydeck/ssh2incus
+license: GPL-3.0
+
+provides:
+  - ssh2incus
+
+contents:
+  - src: ./build/ssh2incus
+    dst: /bin/ssh2incus
+
+  - src: ./packaging/ssh2incus.env
+    dst: /etc/default/ssh2incus
+    type: config|noreplace
+
+  - src: ./packaging/ssh2incus.service
+    dst: /lib/systemd/system/ssh2incus.service
+
+  - src: ./README.md
+    dst: /usr/share/doc/ssh2incus/README.md
+
+  - src: ./LICENSE
+    dst: /usr/share/licenses/ssh2incus/LICENSE
+
+scripts:
+  postinstall: ./packaging/post-install.sh
