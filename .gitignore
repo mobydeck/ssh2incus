@@ -5,6 +5,7 @@
 /release
 /.go
 /server/bin/
+_examples/
 
 /ansible
 Makefile
