@@ -1,9 +1,6 @@
 package server
 
 import (
-	"bufio"
-	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -182,7 +179,7 @@ func shellHandler(s ssh.Session) {
 	log.Debugf("shell env: %v", env)
 
 	// Setup I/O pipes
-	stdin, _, stderr := setupShellPipes(s)
+	stdin, stderr := setupShellPipes(s)
 	defer func() {
 		stdin.Close()
 		stderr.Close()
@@ -257,68 +254,33 @@ Type incus command:
 		fmt.Sprintf("INCUS_SOCKET=%s", config.IncusSocket),
 	)
 
-	f, err := pty.Start(cmd)
+	p, err := pty.Start(cmd)
 	if err != nil {
-		log.Errorf("pty start failed: %v", err)
+		log.Errorln(err.Error())
 		io.WriteString(s, "Couldn't allocate PTY\n")
-		s.Exit(ExitCodeConnectionError)
-		return
+		s.Exit(-1)
 	}
-	defer f.Close()
+	defer p.Close()
 
-	// Welcome message
 	io.WriteString(s, `
 incus shell emulator. Use Ctrl+c to exit
 
 Hit Enter or type 'help' for help
 `)
-	// Create a context that will be canceled when the function exits
-	ctx, cancel := context.WithCancel(s.Context())
-	defer cancel()
-
-	// Handle window resize events
 	go func() {
-		for {
-			select {
-			case win, ok := <-winCh:
-				if !ok {
-					return
-				}
-				setWinsize(f, win.Width, win.Height)
-			case <-ctx.Done():
-				return
-			}
+		for win := range winCh {
+			setWinsize(p, win.Width, win.Height)
 		}
 	}()
-
 	go func() {
-		defer cancel()
-		bufIn := bufio.NewReader(s)
-		_, err := io.Copy(f, bufIn)
-		if err != nil && !errors.Is(err, io.EOF) {
-			log.Debugf("stdin copy error: %v", err)
-		}
+		io.Copy(p, s) // stdin
 	}()
-
-	bufOut := bufio.NewWriter(s)
-	_, err = io.Copy(bufOut, f)
-	if err != nil && !errors.Is(err, io.EOF) {
-		log.Debugf("stdout copy error: %v", err)
-	}
-
-	// Wait for the command to finish and check for errors
-	if err = cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			s.Exit(exitErr.ExitCode())
-		} else {
-			log.Errorf("command wait error: %v", err)
-			s.Exit(ExitCodeConnectionError)
-		}
-	}
+	io.Copy(s, p) // stdout
+	cmd.Wait()
 }
 
 // Helper function to setup stdin/stdout/stderr pipes
-func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
+func setupShellPipes(s ssh.Session) (io.ReadCloser, io.WriteCloser) {
 	stdin, inWrite := io.Pipe()
 	errRead, stderr := io.Pipe()
 
@@ -353,7 +315,7 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
 
 			if nr > 0 {
 				// Write to pipe
-				_, err := inWrite.Write(buf[0:nr])
+				_, err = inWrite.Write(buf[0:nr])
 				if err != nil {
 					log.Debugf("Write error to stdin pipe: %v", err)
 					return
@@ -390,7 +352,7 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
 
 			if nr > 0 {
 				// Write to session stderr
-				_, err := s.Stderr().Write(buf[0:nr])
+				_, err = s.Stderr().Write(buf[0:nr])
 				if err != nil {
 					log.Debugf("Write error to SSH session stderr: %v", err)
 					return
@@ -399,7 +361,7 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
 		}
 	}()
 
-	return stdin, s, stderr
+	return stdin, stderr
 }
 
 func setWinsize(f *os.File, w, h int) {
