@@ -114,10 +114,15 @@ func Run(c *Config) {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
+	err := cleanLeftoverProxyDevices()
+	if err != nil {
+		log.Errorf("clean leftover devices: %v", err)
+	}
+
 	// Start the server in a goroutine
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != ssh.ErrServerClosed {
-			log.Fatalf("Server error: %w", err)
+			log.Fatalf("Server error: %v", err)
 		}
 	}()
 
@@ -129,14 +134,14 @@ func Run(c *Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := deviceRegistry.ShutdownAllDevices(ctx)
+	err = deviceRegistry.ShutdownAllDevices(ctx)
 	if err != nil {
-		log.Errorf("Failed to shutdown devices: %w", err)
+		log.Errorf("Failed to shutdown devices: %v", err)
 	}
 
 	// Perform graceful shutdown
 	if err = server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server shutdown failed: %w", err)
+		log.Fatalf("Server shutdown failed: %v", err)
 	}
 
 	log.Info("Server gracefully stopped")
@@ -186,7 +191,7 @@ func getIncusServerParams() (*incus.ConnectParams, error) {
 
 	clicfg, err := cliconfig.LoadConfig("")
 	if err != nil {
-		log.Debugf("Failed to load incus CLI config: %w", err)
+		log.Debugf("Failed to load incus CLI config: %v", err)
 	}
 
 	var url string
@@ -270,7 +275,7 @@ func getIncusServerParams() (*incus.ConnectParams, error) {
 func checkHealth() {
 	err := checkIncus()
 	if err != nil {
-		log.Errorf("Health check failed: %w", err)
+		log.Errorf("Health check failed: %v", err)
 	}
 }
 

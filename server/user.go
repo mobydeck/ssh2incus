@@ -41,13 +41,13 @@ func (lu LoginUser) IsValid() bool {
 
 	server, err := NewIncusServer()
 	if err != nil {
-		log.Errorf("failed to initialize incus client: %w", err)
+		log.Errorf("failed to initialize incus client: %v", err)
 		return false
 	}
 
 	err = server.Connect(context.Background())
 	if err != nil {
-		log.Errorf("failed to connect to incus: %w", err)
+		log.Errorf("failed to connect to incus: %v", err)
 		return false
 	}
 	defer server.Disconnect()
@@ -84,7 +84,7 @@ func (lu LoginUser) InstanceHash() string {
 func getOsUser(username string) (*user.User, error) {
 	u, err := user.Lookup(username)
 	if err != nil {
-		log.Errorf("user lookup: %w", err)
+		log.Errorf("user lookup: %v", err)
 		return nil, err
 	}
 	return u, nil
@@ -110,7 +110,7 @@ func getUserAuthKeys(u *user.User) ([][]byte, error) {
 func getUserGroups(u *user.User) ([]string, error) {
 	groups, err := u.GroupIds()
 	if err != nil {
-		log.Errorf("user groups: %w", err)
+		log.Errorf("user groups: %v", err)
 		return nil, err
 	}
 	return groups, nil
@@ -153,7 +153,7 @@ func getGroupIds(groups []string) []string {
 	for _, g := range groups {
 		group, err := user.LookupGroup(g)
 		if err != nil {
-			log.Errorf("group lookup: %w", err)
+			log.Errorf("group lookup: %v", err)
 			continue
 		}
 		ids = append(ids, group.Gid)

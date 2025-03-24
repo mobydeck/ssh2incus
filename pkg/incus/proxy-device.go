@@ -11,13 +11,13 @@ import (
 
 	"ssh2incus/pkg/util"
 	"ssh2incus/pkg/util/buffer"
-
-	log "github.com/sirupsen/logrus"
 )
 
 const (
 	ProxyDeviceSocket = "socket"
 	ProxyDevicePort   = "port"
+
+	ProxyDevicePrefix = "ssh2incus-proxy"
 )
 
 type ProxyDevice struct {
@@ -65,18 +65,16 @@ func (p *ProxyDevice) AddSocket() (string, error) {
 	p.typ = ProxyDeviceSocket
 	instance, etag, err := p.srv.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorf("get instance: %w", err)
 		return "", err
 	}
 
 	tmpDir := "/tmp"
-	p.deviceName = "ssh2incus-proxy-socket-" + strconv.FormatInt(time.Now().UnixNano(), 16) + util.RandomStringLower(5)
+	p.deviceName = fmt.Sprintf("%s-socket-%s", ProxyDevicePrefix, strconv.FormatInt(time.Now().UnixNano(), 16)+util.RandomStringLower(5))
 	p.target = path.Join(tmpDir, p.deviceName+".sock")
 
 	_, ok := instance.Devices[p.deviceName]
 	if ok {
-		log.Errorf("device %s already exists for %s", p.deviceName, instance.Name)
-		return "", err
+		return "", fmt.Errorf("device %s already exists for %s.%s", p.deviceName, instance.Name, instance.Project)
 	}
 
 	device := map[string]string{}
@@ -91,49 +89,42 @@ func (p *ProxyDevice) AddSocket() (string, error) {
 	instance.Devices[p.deviceName] = device
 	op, err := p.srv.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
-		log.Errorln(err.Error())
 		return "", err
 	}
 
 	err = op.Wait()
 	if err != nil {
-		log.Errorln(err.Error())
 		return "", err
 	}
-
-	log.Debugf("proxy-device: added %#v for %#v", device, p)
 
 	return p.target, nil
 }
 
-func (p *ProxyDevice) RemoveSocket() {
+func (p *ProxyDevice) RemoveSocket() error {
 	err := p.srv.Connect(context.Background())
 	if err != nil {
-		return
+		return err
 	}
 	defer p.srv.Disconnect()
 	instance, etag, err := p.srv.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorf("get instance: %v", err)
-		return
+		return err
 	}
 
 	device, ok := instance.Devices[p.deviceName]
 	if !ok {
-		log.Errorf("device %s does not exist for %s", p.deviceName, instance.Name)
-		return
+		return fmt.Errorf("device %s does not exist for %s", p.deviceName, instance.Name)
 	}
 	delete(instance.Devices, p.deviceName)
 
 	op, err := p.srv.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
-		log.Errorln(err.Error())
-		return
+		return err
 	}
 
 	err = op.Wait()
 	if err != nil {
-		log.Errorln(err.Error())
+		return err
 	}
 
 	source := strings.TrimPrefix(device["connect"], "unix:")
@@ -152,33 +143,31 @@ func (p *ProxyDevice) RemoveSocket() {
 	ret, err := ie.Exec()
 
 	if ret != 0 {
-		log.Errorf("instance exec: %w", err)
+		return err
 	}
 
-	log.Debugf("proxy-device: removed %#v", p)
+	return nil
 }
 
 func (p *ProxyDevice) AddPort() (string, error) {
 	p.typ = ProxyDevicePort
 	instance, etag, err := p.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorf("get instance: %w", err)
 		return "", err
 	}
 
 	port, err := util.GetFreePort()
 	if err != nil {
-		log.Errorln(err.Error())
 		return "", err
 	}
 
-	p.deviceName = fmt.Sprintf("ssh2incus-proxy-port-%d", port)
+	p.deviceName = fmt.Sprintf("%s-port-%d", ProxyDevicePrefix, port)
 	p.target = fmt.Sprintf("%d", port)
 
 	_, ok := instance.Devices[p.deviceName]
 	if ok {
-		log.Errorf("device %s already exists for %s", p.deviceName, instance.Name)
-		return "", err
+
+		return "", fmt.Errorf("device %s already exists for %s", p.deviceName, instance.Name)
 	}
 
 	device := map[string]string{}
@@ -190,50 +179,43 @@ func (p *ProxyDevice) AddPort() (string, error) {
 	instance.Devices[p.deviceName] = device
 	op, err := p.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
-		log.Errorln(err.Error())
 		return "", err
 	}
 
 	err = op.Wait()
 	if err != nil {
-		log.Errorln(err.Error())
 		return "", err
 	}
-
-	log.Debugf("proxy-device: added %#v for %#v", device, p)
 
 	return p.target, nil
 }
 
-func (p *ProxyDevice) RemovePort() {
+func (p *ProxyDevice) RemovePort() error {
 	err := p.srv.Connect(context.Background())
 	if err != nil {
-		return
+		return err
 	}
 	defer p.srv.Disconnect()
 	instance, etag, err := p.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorf("proxy-device: get instance: %v", err)
-		return
+		return err
 	}
 
 	_, ok := instance.Devices[p.deviceName]
 	if !ok {
-		log.Errorf("device %s does not exist for %s", p.deviceName, instance.Name)
-		return
+		return fmt.Errorf("device %s does not exist for %s", p.deviceName, instance.Name)
 	}
 	delete(instance.Devices, p.deviceName)
 
 	op, err := p.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
-		log.Errorf("proxy-device: update instance: %w", err)
-		return
+		return err
 	}
 
 	err = op.Wait()
 	if err != nil {
-		log.Errorf("proxy-device: remove port: %w", err)
+		return err
 	}
 
-	log.Debugf("proxy-device: removed %#v", p)
+	return nil
 }

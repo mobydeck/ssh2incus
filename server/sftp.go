@@ -25,7 +25,7 @@ func sftpSubsystemHandler(s ssh.Session) {
 
 	server, err := NewIncusServer()
 	if err != nil {
-		log.Errorf("failed to initialize incus client: %w", err)
+		log.Errorf("failed to initialize incus client: %v", err)
 		io.WriteString(s, "invalid connection data")
 		s.Exit(ExitCodeInvalidLogin)
 		return
@@ -34,7 +34,7 @@ func sftpSubsystemHandler(s ssh.Session) {
 	// subsystem needs own context
 	err = server.Connect(context.Background())
 	if err != nil {
-		log.Errorf("failed to connect to incus: %w", err)
+		log.Errorf("failed to connect to incus: %v", err)
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
@@ -43,7 +43,7 @@ func sftpSubsystemHandler(s ssh.Session) {
 	if !lu.IsDefaultProject() {
 		err = server.UseProject(lu.Project)
 		if err != nil {
-			log.Errorf("using project %s error: %w", lu.Project, err)
+			log.Errorf("using project %s error: %v", lu.Project, err)
 			io.WriteString(s, fmt.Sprintf("unknown project %s\n", lu.Project))
 			s.Exit(ExitCodeInvalidProject)
 			return
@@ -81,7 +81,7 @@ func sftpSubsystemHandler(s ssh.Session) {
 	if !server.FileExists(lu.Project, lu.Instance, sftpServerBinName, util.Md5Bytes(sftpServerBinBytes), true) {
 		err = server.UploadBytes(lu.Project, lu.Instance, sftpServerBinName, bytes.NewReader(sftpServerBinBytes), 0, 0, 0755)
 		if err != nil {
-			log.Errorf("upload failed: %w", err)
+			log.Errorf("upload failed: %v", err)
 			io.WriteString(s, fmt.Sprintf("sftp-server is not available on %s.%s\n", lu.Instance, lu.Project))
 			s.Exit(ExitCodeConnectionError)
 			return

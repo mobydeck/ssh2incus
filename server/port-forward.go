@@ -49,7 +49,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 	} else {
 		server, err := NewIncusServer()
 		if err != nil {
-			log.Errorf("failed to initialize incus client: %w", err)
+			log.Errorf("failed to initialize incus client: %v", err)
 			newChan.Reject(gossh.ConnectionFailed, "cannot initialize incus client: "+err.Error())
 			conn.Close()
 			return
@@ -58,7 +58,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 		// Connect to Incus
 		err = server.Connect(ctx)
 		if err != nil {
-			log.Errorf("failed to connect to incus: %w", err)
+			log.Errorf("failed to connect to incus: %v", err)
 			newChan.Reject(gossh.ConnectionFailed, "cannot connect to incus: "+err.Error())
 			conn.Close()
 			return
@@ -111,7 +111,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 	if d.DestAddr == "127.0.0.1" {
 		server, err := NewIncusServer()
 		if err != nil {
-			log.Errorf("failed to initialize incus client: %w", err)
+			log.Errorf("failed to initialize incus client: %v", err)
 			newChan.Reject(gossh.ConnectionFailed, "cannot initialize incus client: "+err.Error())
 			conn.Close()
 			return
@@ -119,7 +119,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 
 		err = server.Connect(ctx)
 		if err != nil {
-			log.Errorf("failed to connect to incus: %w", err)
+			log.Errorf("failed to connect to incus: %v", err)
 			newChan.Reject(gossh.ConnectionFailed, "cannot connect to incus: "+err.Error())
 			conn.Close()
 			return
@@ -148,7 +148,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 			deviceRegistry.AddDevice(p)
 			defer p.RemovePort()
 		} else {
-			log.Errorf("port forwarding: %w", err)
+			log.Errorf("port forwarding: %v", err)
 		}
 	}
 

@@ -3,21 +3,75 @@ package incus
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"os"
+	"path"
 	"strconv"
+	"strings"
 	"sync"
 
+	"ssh2incus/pkg/util/buffer"
 	"ssh2incus/pkg/util/shlex"
 
 	"github.com/gorilla/websocket"
 	"github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/shared/api"
-	log "github.com/sirupsen/logrus"
 )
 
 func (s *Server) GetInstanceMeta(instance string) (*api.ImageMetadata, string, error) {
 	meta, etag, err := s.srv.GetInstanceMetadata(instance)
 	return meta, etag, err
+}
+
+func (s *Server) DeleteInstanceDevice(i *api.Instance, name, etag string) error {
+	if !strings.HasPrefix(name, ProxyDevicePrefix) {
+		return nil
+	}
+
+	device, ok := i.Devices[name]
+	if !ok {
+		return fmt.Errorf("device %s does not exist for %s.%s", device, i.Name, i.Project)
+	}
+	delete(i.Devices, name)
+
+	op, err := s.UpdateInstance(i.Name, i.Writable(), etag)
+	if err != nil {
+		return err
+	}
+
+	err = op.Wait()
+	if err != nil {
+		return err
+	}
+
+	// Cleanup socket files
+	if strings.HasPrefix(device["connect"], "unix:") {
+		source := strings.TrimPrefix(device["connect"], "unix:")
+		os.RemoveAll(path.Dir(source))
+	}
+
+	if strings.HasPrefix(device["listen"], "unix:") {
+		target := strings.TrimPrefix(device["listen"], "unix:")
+		cmd := fmt.Sprintf("rm -f %s", target)
+		stdout := buffer.NewOutputBuffer()
+		stderr := buffer.NewOutputBuffer()
+		defer stdout.Close()
+		defer stderr.Close()
+		ie := s.NewInstanceExec(InstanceExec{
+			Instance: i.Name,
+			Cmd:      cmd,
+			Stdout:   stdout,
+			Stderr:   stderr,
+		})
+		ret, err := ie.Exec()
+
+		if ret != 0 {
+			return err
+		}
+	}
+
+	return nil
 }
 
 type Window struct {
@@ -71,7 +125,6 @@ type InstanceExec struct {
 // BuildExecRequest prepares the execution parameters
 func (e *InstanceExec) BuildExecRequest() {
 	args, _ := shlex.Split(e.Cmd, true)
-	log.Debugf("exec: %#v", args)
 
 	e.execPost = api.InstanceExecPost{
 		Command:     args,
@@ -98,12 +151,6 @@ func (e *InstanceExec) Exec() (int, error) {
 
 	// Setup error capturing
 	errWriter, errBuf := e.setupErrorCapture()
-	defer func() {
-		errs := errBuf.String()
-		if errs != "" {
-			log.Errorln("exec errors:", errs)
-		}
-	}()
 
 	// Setup websocket control handler
 	control, wg := e.setupControlHandler()
@@ -121,16 +168,12 @@ func (e *InstanceExec) Exec() (int, error) {
 	// Execute the command
 	op, err := server.srv.ExecInstance(e.Instance, e.execPost, e.execArgs)
 	if err != nil {
-		log.Errorln("ExecInstance error:", err)
-		return -1, err
+		return -1, fmt.Errorf("exec instance: %w", err)
 	}
-
-	log.Debugf("exec meta: %#v", op.Get().Metadata)
 
 	// Wait for operation to complete
 	if err = op.Wait(); err != nil {
-		log.Errorln("Operation wait error:", err)
-		return -1, err
+		return -1, fmt.Errorf("operation wait: %w", err)
 	}
 
 	// Wait for data transfer to complete
@@ -142,6 +185,11 @@ func (e *InstanceExec) Exec() (int, error) {
 	// Get execution result
 	opAPI := op.Get()
 	ret := int(opAPI.Metadata["return"].(float64))
+
+	errs := errBuf.String()
+	if errs != "" {
+		return ret, fmt.Errorf("exec errors: %s", errs)
+	}
 
 	return ret, nil
 }

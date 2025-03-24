@@ -102,14 +102,14 @@ func shellHandler(s ssh.Session) {
 
 	server, err := NewIncusServer()
 	if err != nil {
-		log.Errorf("failed to initialize incus client: %w", err)
+		log.Errorf("failed to initialize incus client: %v", err)
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
 
 	err = server.Connect(s.Context())
 	if err != nil {
-		log.Errorf("failed to connect to incus: %w", err)
+		log.Errorf("failed to connect to incus: %v", err)
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
@@ -119,7 +119,7 @@ func shellHandler(s ssh.Session) {
 	if !lu.IsDefaultProject() {
 		err = server.UseProject(lu.Project)
 		if err != nil {
-			log.Errorf("using project %s error: %w", lu.Project, err)
+			log.Errorf("using project %s error: %v", lu.Project, err)
 			io.WriteString(s, fmt.Sprintf("unknown project %s\n", lu.Project))
 			s.Exit(ExitCodeInvalidProject)
 			return
@@ -149,7 +149,7 @@ func shellHandler(s ssh.Session) {
 	if ssh.AgentRequested(s) {
 		l, err := ssh.NewAgentListener()
 		if err != nil {
-			log.Errorf("Failed to create agent listener: %w", err)
+			log.Errorf("Failed to create agent listener: %v", err)
 			return
 		}
 
@@ -170,7 +170,7 @@ func shellHandler(s ssh.Session) {
 			deviceRegistry.AddDevice(d)
 			defer d.RemoveSocket()
 		} else {
-			log.Errorf("Failed to add socket: %w", err)
+			log.Errorf("Failed to add socket: %v", err)
 		}
 	}
 
@@ -216,7 +216,7 @@ func shellHandler(s ssh.Session) {
 
 	ret, err := ie.Exec()
 	if err != nil {
-		log.Debugf("shell: connection failed: %w", err)
+		log.Debugf("shell: connection failed: %v", err)
 	}
 
 	s.Exit(ret)
@@ -229,7 +229,7 @@ Type incus command:
 
 	args, err := shlex.Split(cmdString, true)
 	if err != nil {
-		log.Errorf("command parsing failed: %w", err)
+		log.Errorf("command parsing failed: %v", err)
 		io.WriteString(s, "Internal error: command parsing failed\n")
 		s.Exit(ExitCodeConnectionError)
 		return
@@ -252,7 +252,7 @@ Type incus command:
 
 	f, err := pty.Start(cmd)
 	if err != nil {
-		log.Errorf("pty start failed: %w", err)
+		log.Errorf("pty start failed: %v", err)
 		io.WriteString(s, "Couldn't allocate PTY\n")
 		s.Exit(ExitCodeConnectionError)
 		return
@@ -289,14 +289,14 @@ Hit Enter or type 'help' for help
 		bufIn := bufio.NewReader(s)
 		_, err := io.Copy(f, bufIn)
 		if err != nil && !errors.Is(err, io.EOF) {
-			log.Debugf("stdin copy error: %w", err)
+			log.Debugf("stdin copy error: %v", err)
 		}
 	}()
 
 	bufOut := bufio.NewWriter(s)
 	_, err = io.Copy(bufOut, f)
 	if err != nil && !errors.Is(err, io.EOF) {
-		log.Debugf("stdout copy error: %w", err)
+		log.Debugf("stdout copy error: %v", err)
 	}
 
 	// Wait for the command to finish and check for errors
@@ -304,7 +304,7 @@ Hit Enter or type 'help' for help
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			s.Exit(exitErr.ExitCode())
 		} else {
-			log.Errorf("command wait error: %w", err)
+			log.Errorf("command wait error: %v", err)
 			s.Exit(ExitCodeConnectionError)
 		}
 	}

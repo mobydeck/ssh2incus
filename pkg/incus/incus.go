@@ -126,6 +126,10 @@ func (s *Server) UpdateInstance(name string, instance api.InstancePut, ETag stri
 	return s.srv.UpdateInstance(name, instance, ETag)
 }
 
+func (s *Server) GetInstancesAllProjects(t api.InstanceType) (instances []api.Instance, err error) {
+	return s.srv.GetInstancesAllProjects(t)
+}
+
 func IsDefaultProject(project string) bool {
 	if project == "" || project == "default" {
 		return true
