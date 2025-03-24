@@ -180,7 +180,7 @@ func (p *ProxyDevice) AddPort() (string, error) {
 func (p *ProxyDevice) RemovePort() {
 	instance, etag, err := p.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorf("get instance: %w", err)
+		log.Errorf("proxy-device: get instance: %w", err)
 		return
 	}
 
@@ -193,13 +193,13 @@ func (p *ProxyDevice) RemovePort() {
 
 	op, err := p.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
-		log.Errorf("update instance: %w", err)
+		log.Errorf("proxy-device: update instance: %w", err)
 		return
 	}
 
 	err = op.Wait()
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("proxy-device: remove port: %w", err)
 	}
 
 	log.Debugf("proxy-device: removed %#v", p)

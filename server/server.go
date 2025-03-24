@@ -125,16 +125,11 @@ func Run(c *Config) {
 	<-stop
 	log.Info("Shutting down server...")
 
-	// Create a context with a 5 second timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Perform graceful shutdown
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Close(); err != nil {
 		log.Fatalf("Server shutdown failed: %w", err)
 	}
 
-	log.Info("Server gracefully stopped")
+	log.Info("Server stopped")
 
 }
 
