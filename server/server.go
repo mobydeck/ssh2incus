@@ -100,7 +100,7 @@ func Run(c *Config) {
 		},
 		ChannelHandlers: map[string]ssh.ChannelHandler{
 			"session":      ssh.DefaultSessionHandler,
-			"direct-tcpip": DirectTCPIPHandler,
+			"direct-tcpip": directTCPIPHandler,
 		},
 		HostSigners: hostSigners,
 	}
@@ -112,7 +112,7 @@ func Run(c *Config) {
 	// Start the server in a goroutine
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != ssh.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			log.Fatalf("Server error: %w", err)
 		}
 	}()
 
@@ -126,7 +126,7 @@ func Run(c *Config) {
 
 	// Perform graceful shutdown
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server shutdown failed: %v", err)
+		log.Fatalf("Server shutdown failed: %w", err)
 	}
 
 	log.Info("Server gracefully stopped")
@@ -140,35 +140,43 @@ func enableHealthCheck() {
 }
 
 func checkIncus() error {
-	ctx := context.Background()
-
-	params, err := GetServerParams()
+	server, err := NewIncusServer()
 	if err != nil {
-		return fmt.Errorf("failed to get Incus connection parameters: %w", err)
+		return fmt.Errorf("failed to initialize incus client: %w", err)
 	}
 
 	// Connect to Incus
-	s, err := incus.Connect(ctx, params)
+	err = server.Connect(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to connect to Incus: %w", err)
+		return fmt.Errorf("failed to connect to incus: %w", err)
 	}
+	defer server.Disconnect()
 
-	info := incus.GetConnectionInfo(s)
+	info := server.GetConnectionInfo()
 	config.IncusInfo = info
 	log.Debugln(info)
 
-	s.Disconnect()
 	return nil
 }
 
-func GetServerParams() (*incus.ConnectParams, error) {
+func NewIncusServer() (*incus.Server, error) {
+	params, err := getIncusServerParams()
+	if err != nil {
+		return nil, err
+	}
+	s := incus.NewServer()
+	s.SetConnectParams(params)
+	return s, nil
+}
+
+func getIncusServerParams() (*incus.ConnectParams, error) {
 	if connectParams != nil {
 		return connectParams, nil
 	}
 
 	clicfg, err := cliconfig.LoadConfig("")
 	if err != nil {
-		log.Debugf("Failed to load Incus CLI config: %v", err)
+		log.Debugf("Failed to load incus CLI config: %w", err)
 	}
 
 	var url string
@@ -178,7 +186,7 @@ func GetServerParams() (*incus.ConnectParams, error) {
 	if config.Remote != "" && clicfg != nil {
 		remote, ok := clicfg.Remotes[config.Remote]
 		if !ok {
-			return nil, fmt.Errorf("remote '%s' not found in Incus configuration", config.Remote)
+			return nil, fmt.Errorf("remote '%s' not found in incus configuration", config.Remote)
 		}
 		url = remote.Addr
 
@@ -201,10 +209,10 @@ func GetServerParams() (*incus.ConnectParams, error) {
 
 			// Ensure certificate files exist
 			if _, err := os.Stat(certFile); err != nil {
-				return nil, fmt.Errorf("client certificate not found at %s: %v", certFile, err)
+				return nil, fmt.Errorf("client certificate not found at %s: %w", certFile, err)
 			}
 			if _, err := os.Stat(keyFile); err != nil {
-				return nil, fmt.Errorf("client key not found at %s: %v", keyFile, err)
+				return nil, fmt.Errorf("client key not found at %s: %w", keyFile, err)
 			}
 		}
 	} else if config.URL != "" {
@@ -252,11 +260,11 @@ func GetServerParams() (*incus.ConnectParams, error) {
 func checkHealth() {
 	err := checkIncus()
 	if err != nil {
-		log.Errorln("Health check failed", err.Error())
+		log.Errorf("Health check failed: %w", err)
 	}
 }
 
 func defaultSubsystemHandler(s ssh.Session) {
 	s.Write([]byte(fmt.Sprintf("%s subsytem not implemented\n", s.Subsystem())))
-	s.Exit(-1)
+	s.Exit(ExitCodeNotImplemented)
 }

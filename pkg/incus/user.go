@@ -7,7 +7,6 @@ import (
 
 	"ssh2incus/pkg/util/buffer"
 
-	"github.com/lxc/incus/v6/client"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -21,18 +20,17 @@ type InstanceUser struct {
 	Ent      string
 }
 
-func GetInstanceUser(server incus.InstanceServer, instance, user string) *InstanceUser {
+func (s *Server) GetInstanceUser(instance, user string) *InstanceUser {
 	cmd := fmt.Sprintf("getent passwd %s", user)
 	stdout := buffer.NewOutputBuffer()
 	stderr := buffer.NewOutputBuffer()
 
-	ie := &InstanceExec{
-		Server:   &server,
+	ie := s.NewInstanceExec(InstanceExec{
 		Instance: instance,
 		Cmd:      cmd,
 		Stdout:   stdout,
 		Stderr:   stderr,
-	}
+	})
 
 	ret, _ := ie.Exec()
 

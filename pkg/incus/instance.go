@@ -13,8 +13,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func GetInstanceMeta(server incus.InstanceServer, instance string) (*api.ImageMetadata, string, error) {
-	meta, etag, err := server.GetInstanceMetadata(instance)
+func (s *Server) GetInstanceMeta(instance string) (*api.ImageMetadata, string, error) {
+	meta, etag, err := s.srv.GetInstanceMetadata(instance)
 	return meta, etag, err
 }
 
@@ -25,8 +25,26 @@ type Window struct {
 
 type WindowChannel chan Window
 
+func (s *Server) NewInstanceExec(e InstanceExec) *InstanceExec {
+	return &InstanceExec{
+		srv:      s,
+		Instance: e.Instance,
+		Cmd:      e.Cmd,
+		Env:      e.Env,
+		IsPty:    e.IsPty,
+		Window:   e.Window,
+		WinCh:    e.WinCh,
+		User:     e.User,
+		Group:    e.Group,
+		Cwd:      e.Cwd,
+		Stdin:    e.Stdin,
+		Stdout:   e.Stdout,
+		Stderr:   e.Stderr,
+	}
+}
+
 type InstanceExec struct {
-	Server   *incus.InstanceServer
+	srv      *Server
 	Instance string
 	Cmd      string
 	Env      map[string]string
@@ -102,8 +120,7 @@ func (e *InstanceExec) Exec() (int, error) {
 }
 
 func (e *InstanceExec) exec() (int, error) {
-
-	op, err := (*e.Server).ExecInstance(e.Instance, e.execPost, e.execArgs)
+	op, err := e.srv.srv.ExecInstance(e.Instance, e.execPost, e.execArgs)
 	if err != nil {
 		log.Errorln(err.Error())
 		return -1, err

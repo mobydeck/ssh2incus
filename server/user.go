@@ -39,15 +39,15 @@ func (lu LoginUser) IsValid() bool {
 		delete(loginUserCache, lu.Hash())
 	}
 
-	params, err := GetServerParams()
+	server, err := NewIncusServer()
 	if err != nil {
-		log.Errorf("failed to get Incus connection parameters: %w", err)
+		log.Errorf("failed to initialize incus client: %w", err)
 		return false
 	}
 
-	server, err := incus.Connect(context.Background(), params)
+	err = server.Connect(context.Background())
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("failed to connect to incus: %w", err)
 		return false
 	}
 	defer server.Disconnect()
@@ -57,7 +57,7 @@ func (lu LoginUser) IsValid() bool {
 	}
 
 	if !lu.IsDefaultProject() {
-		server, err = incus.UseProject(server, lu.Project)
+		err = server.UseProject(lu.Project)
 		if err != nil {
 			log.Errorf("using project %s error: %s", lu.Project, err)
 			return false
@@ -84,7 +84,7 @@ func (lu LoginUser) InstanceHash() string {
 func getOsUser(username string) (*user.User, error) {
 	u, err := user.Lookup(username)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("user lookup: %w", err)
 		return nil, err
 	}
 	return u, nil
@@ -95,7 +95,7 @@ func getUserAuthKeys(u *user.User) ([][]byte, error) {
 
 	f, err := os.Open(filepath.Clean(u.HomeDir + "/.ssh/authorized_keys"))
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("error with authorized_keys", err)
 		return nil, err
 	}
 	defer f.Close()
@@ -110,7 +110,7 @@ func getUserAuthKeys(u *user.User) ([][]byte, error) {
 func getUserGroups(u *user.User) ([]string, error) {
 	groups, err := u.GroupIds()
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("user groups: %w", err)
 		return nil, err
 	}
 	return groups, nil
@@ -153,7 +153,7 @@ func getGroupIds(groups []string) []string {
 	for _, g := range groups {
 		group, err := user.LookupGroup(g)
 		if err != nil {
-			log.Errorln(err.Error())
+			log.Errorf("group lookup: %w", err)
 			continue
 		}
 		ids = append(ids, group.Gid)

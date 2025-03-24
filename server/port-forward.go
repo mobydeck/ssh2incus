@@ -24,7 +24,7 @@ type localForwardChannelData struct {
 	OriginPort uint32
 }
 
-func DirectTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx ssh.Context) {
+func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx ssh.Context) {
 	lu, ok := ctx.Value("LoginUser").(LoginUser)
 	if !ok || !lu.IsValid() {
 		log.Errorf("invalid connection data for %#v", lu)
@@ -47,35 +47,35 @@ func DirectTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 			d.DestAddr = instanceAddr
 		}
 	} else {
-		params, err := GetServerParams()
+		server, err := NewIncusServer()
 		if err != nil {
-			log.Errorf("failed to get Incus connection parameters: %w", err)
-			newChan.Reject(gossh.ConnectionFailed, "cannot connect to Incus: "+err.Error())
+			log.Errorf("failed to initialize incus client: %w", err)
+			newChan.Reject(gossh.ConnectionFailed, "cannot initialize incus client: "+err.Error())
 			conn.Close()
 			return
 		}
 
 		// Connect to Incus
-		server, err := incus.Connect(ctx, params)
+		err = server.Connect(ctx)
 		if err != nil {
-			log.Errorln(err.Error())
-			newChan.Reject(gossh.ConnectionFailed, "cannot connect to Incus: "+err.Error())
+			log.Errorf("failed to connect to incus: %w", err)
+			newChan.Reject(gossh.ConnectionFailed, "cannot connect to incus: "+err.Error())
 			conn.Close()
 			return
 		}
+		defer server.Disconnect()
 
 		if !lu.IsDefaultProject() {
-			server, err = incus.UseProject(server, lu.Project)
+			err = server.UseProject(lu.Project)
 			if err != nil {
 				log.Errorf("using project %s error: %s", lu.Project, err)
-				newChan.Reject(gossh.ConnectionFailed, "cannot connect to Incus: "+err.Error())
+				newChan.Reject(gossh.ConnectionFailed, "cannot connect to incus: "+err.Error())
 				conn.Close()
 				return
 			}
 		}
 
 		meta, _, err := server.GetInstanceState(lu.Instance)
-		server.Disconnect()
 		if err != nil {
 			log.Errorf("failed to get instance state for %#v", lu)
 			newChan.Reject(gossh.ConnectionFailed, err.Error())
@@ -93,20 +93,6 @@ func DirectTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 			}
 		}
 
-		//if _, ok := meta.Network["eth0"]; !ok {
-		//	log.Errorf("failed to get instance network for %#v", lu)
-		//	newChan.Reject(gossh.ConnectionFailed, "")
-		//	conn.Close()
-		//	return
-		//}
-
-		//if len(meta.Network["eth0"].Addresses) == 0 {
-		//	log.Errorf("failed to get instance IP address for %#v", lu)
-		//	newChan.Reject(gossh.ConnectionFailed, "")
-		//	conn.Close()
-		//	return
-		//}
-
 		if len(network.Addresses) == 0 {
 			log.Errorf("failed to get instance IP address for %#v", lu)
 			newChan.Reject(gossh.ConnectionFailed, "")
@@ -123,44 +109,45 @@ func DirectTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 	}
 
 	if d.DestAddr == "127.0.0.1" {
-		params, err := GetServerParams()
+		server, err := NewIncusServer()
 		if err != nil {
-			log.Errorf("failed to get Incus connection parameters: %w", err)
-			newChan.Reject(gossh.ConnectionFailed, "cannot connect to Incus: "+err.Error())
+			log.Errorf("failed to initialize incus client: %w", err)
+			newChan.Reject(gossh.ConnectionFailed, "cannot initialize incus client: "+err.Error())
 			conn.Close()
 			return
 		}
 
-		// Connect to Incus
-		server, err := incus.Connect(ctx, params)
+		err = server.Connect(ctx)
 		if err != nil {
-			log.Errorln(err.Error())
-			newChan.Reject(gossh.ConnectionFailed, "cannot connect to Incus: "+err.Error())
+			log.Errorf("failed to connect to incus: %w", err)
+			newChan.Reject(gossh.ConnectionFailed, "cannot connect to incus: "+err.Error())
 			conn.Close()
 			return
 		}
+		defer server.Disconnect()
 
 		if !lu.IsDefaultProject() {
-			server, err = incus.UseProject(server, lu.Project)
+			err = server.UseProject(lu.Project)
 			if err != nil {
 				log.Errorf("using project %s error: %s", lu.Project, err)
-				newChan.Reject(gossh.ConnectionFailed, "cannot connect to Incus: "+err.Error())
+				newChan.Reject(gossh.ConnectionFailed, "cannot connect to incus: "+err.Error())
 				conn.Close()
 				return
 			}
 		}
-		p := &incus.ProxyDevice{
-			Server:   &server,
+
+		p := server.NewProxyDevice(incus.ProxyDevice{
 			Project:  lu.Project,
 			Instance: lu.Instance,
 			Source:   fmt.Sprintf("%d", d.DestPort),
-		}
+		})
+
 		if port, err := p.AddPort(); err == nil {
 			u64, _ := strconv.ParseUint(port, 10, 32)
 			d.DestPort = uint32(u64)
 			defer p.RemovePort()
 		} else {
-			log.Errorln(err.Error())
+			log.Errorf("port forwarding: %w", err)
 		}
 	}
 

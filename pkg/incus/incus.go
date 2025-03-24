@@ -14,6 +14,7 @@ import (
 	"ssh2incus/pkg/util/structs"
 
 	"github.com/lxc/incus/v6/client"
+	"github.com/lxc/incus/v6/shared/api"
 )
 
 type ConnectParams struct {
@@ -24,18 +25,33 @@ type ConnectParams struct {
 	CaCertFile     string
 }
 
-func Connect(ctx context.Context, params *ConnectParams) (incus.InstanceServer, error) {
+type Server struct {
+	srv    incus.InstanceServer
+	params *ConnectParams
+}
+
+func NewServer() *Server {
+	return &Server{}
+}
+
+func (s *Server) SetConnectParams(p *ConnectParams) {
+	s.params = p
+}
+
+func (s *Server) Connect(ctx context.Context) error {
+	var err error
+	params := *s.params
 	// Check if the URL is an HTTPS URL
 	if strings.HasPrefix(params.Url, "https://") {
 		// HTTPS connection requires client certificates
 		if params.CertFile == "" || params.KeyFile == "" {
-			return nil, fmt.Errorf("client certificate and key files are required for HTTPS connections")
+			return fmt.Errorf("client certificate and key files are required for HTTPS connections")
 		}
 
 		// Load client certificate and key
 		keyPair, err := tls.LoadX509KeyPair(params.CertFile, params.KeyFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
+			return fmt.Errorf("failed to load client certificate and key: %w", err)
 		}
 
 		certPEM := pem.EncodeToMemory(&pem.Block{
@@ -55,7 +71,7 @@ func Connect(ctx context.Context, params *ConnectParams) (incus.InstanceServer, 
 		case *ecdsa.PrivateKey:
 			keyBytes, err := x509.MarshalECPrivateKey(key)
 			if err != nil {
-				return nil, fmt.Errorf("failed to marshal EC private key: %w", err)
+				return fmt.Errorf("failed to marshal EC private key: %w", err)
 			}
 			keyPEM = pem.EncodeToMemory(&pem.Block{
 				Type:  "EC PRIVATE KEY",
@@ -63,14 +79,14 @@ func Connect(ctx context.Context, params *ConnectParams) (incus.InstanceServer, 
 			})
 		default:
 			// For other types like ed25519, we'd need specific handling
-			return nil, fmt.Errorf("unsupported private key type: %T", keyPair.PrivateKey)
+			return fmt.Errorf("unsupported private key type: %T", keyPair.PrivateKey)
 		}
 
 		var serverCertPEM []byte
 		if params.ServerCertFile != "" {
 			serverCertPEM, err = os.ReadFile(params.ServerCertFile)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read CA cert file: %w", err)
+				return fmt.Errorf("failed to read CA cert file: %w", err)
 			}
 		}
 
@@ -80,21 +96,34 @@ func Connect(ctx context.Context, params *ConnectParams) (incus.InstanceServer, 
 			TLSClientKey:  string(keyPEM),
 			TLSServerCert: string(serverCertPEM),
 		}
-
-		return incus.ConnectIncusWithContext(ctx, params.Url, args)
+		s.srv, err = incus.ConnectIncusWithContext(ctx, params.Url, args)
+		return err
 	} else {
 		// If not HTTPS, treat as Unix socket path
-		return incus.ConnectIncusUnixWithContext(ctx, params.Url, nil)
+		s.srv, err = incus.ConnectIncusUnixWithContext(ctx, params.Url, nil)
+		return err
 	}
 }
 
-func UseProject(server incus.InstanceServer, project string) (incus.InstanceServer, error) {
-	_, _, err := server.GetProject(project)
+func (s *Server) UseProject(project string) error {
+	_, _, err := s.srv.GetProject(project)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	p := server.UseProject(project)
-	return p, nil
+	s.srv = s.srv.UseProject(project)
+	return nil
+}
+
+func (s *Server) GetInstance(name string) (*api.Instance, string, error) {
+	return s.srv.GetInstance(name)
+}
+
+func (s *Server) GetInstanceState(name string) (*api.InstanceState, string, error) {
+	return s.srv.GetInstanceState(name)
+}
+
+func (s *Server) UpdateInstance(name string, instance api.InstancePut, ETag string) (incus.Operation, error) {
+	return s.srv.UpdateInstance(name, instance, ETag)
 }
 
 func IsDefaultProject(project string) bool {
@@ -104,7 +133,11 @@ func IsDefaultProject(project string) bool {
 	return false
 }
 
-func GetConnectionInfo(c incus.InstanceServer) map[string]interface{} {
-	info, _ := c.GetConnectionInfo()
+func (s *Server) GetConnectionInfo() map[string]interface{} {
+	info, _ := s.srv.GetConnectionInfo()
 	return structs.Map(info)
+}
+
+func (s *Server) Disconnect() {
+	s.srv.Disconnect()
 }

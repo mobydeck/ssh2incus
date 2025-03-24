@@ -19,7 +19,7 @@ var (
 	fileExistsCacheTtl = time.Minute * 3
 )
 
-func UploadFile(server incus.InstanceServer, project, instance string, src string, dest string) error {
+func (s *Server) UploadFile(project, instance string, src string, dest string) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		log.Errorf("couldn't stat file %s", src)
@@ -35,12 +35,12 @@ func UploadFile(server incus.InstanceServer, project, instance string, src strin
 	}
 	defer f.Close()
 
-	err = UploadBytes(server, project, instance, dest, f, int64(uid), int64(gid), int(mode.Perm()))
+	err = s.UploadBytes(project, instance, dest, f, int64(uid), int64(gid), int(mode.Perm()))
 
 	return err
 }
 
-func UploadBytes(server incus.InstanceServer, project, instance, dest string, b io.ReadSeeker, uid, gid int64, mode int) error {
+func (s *Server) UploadBytes(project, instance, dest string, b io.ReadSeeker, uid, gid int64, mode int) error {
 	args := incus.InstanceFileArgs{
 		Content:   b,
 		UID:       uid,
@@ -50,12 +50,12 @@ func UploadBytes(server incus.InstanceServer, project, instance, dest string, b 
 		WriteMode: "overwrite",
 	}
 
-	err := server.CreateInstanceFile(instance, dest, args)
+	err := s.srv.CreateInstanceFile(instance, dest, args)
 
 	return err
 }
 
-func FileExists(server incus.InstanceServer, project, instance, path, md5sum string, cache bool) bool {
+func (s *Server) FileExists(project, instance, path, md5sum string, cache bool) bool {
 	var fileHash string
 	if cache {
 		fileHash = FileHash(project, instance, path, md5sum)
@@ -70,13 +70,12 @@ func FileExists(server incus.InstanceServer, project, instance, path, md5sum str
 	stdout := buffer.NewOutputBuffer()
 	stderr := buffer.NewOutputBuffer()
 	cmd := fmt.Sprintf("test -f %s", path)
-	ie := &InstanceExec{
-		Server:   &server,
+	ie := s.NewInstanceExec(InstanceExec{
 		Instance: instance,
 		Cmd:      cmd,
 		Stdout:   stdout,
 		Stderr:   stderr,
-	}
+	})
 	ret, _ := ie.Exec()
 
 	if ret != 0 {

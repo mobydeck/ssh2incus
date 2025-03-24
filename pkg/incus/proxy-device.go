@@ -11,12 +11,12 @@ import (
 	"ssh2incus/pkg/util"
 	"ssh2incus/pkg/util/buffer"
 
-	"github.com/lxc/incus/v6/client"
 	log "github.com/sirupsen/logrus"
 )
 
 type ProxyDevice struct {
-	Server   *incus.InstanceServer
+	srv *Server
+
 	Project  string
 	Instance string
 	Source   string
@@ -28,10 +28,22 @@ type ProxyDevice struct {
 	target     string
 }
 
+func (s *Server) NewProxyDevice(d ProxyDevice) *ProxyDevice {
+	return &ProxyDevice{
+		srv:      s,
+		Project:  d.Project,
+		Instance: d.Instance,
+		Source:   d.Source,
+		Uid:      d.Uid,
+		Gid:      d.Gid,
+		Mode:     d.Mode,
+	}
+}
+
 func (p *ProxyDevice) AddSocket() (string, error) {
-	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	instance, etag, err := p.srv.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("get instance: %w", err)
 		return "", err
 	}
 
@@ -55,7 +67,7 @@ func (p *ProxyDevice) AddSocket() (string, error) {
 	device["gid"] = strconv.Itoa(p.Gid)
 
 	instance.Devices[p.deviceName] = device
-	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	op, err := p.srv.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
 		log.Errorln(err.Error())
 		return "", err
@@ -73,9 +85,9 @@ func (p *ProxyDevice) AddSocket() (string, error) {
 }
 
 func (p *ProxyDevice) RemoveSocket() {
-	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	instance, etag, err := p.srv.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("get instance: %w", err)
 		return
 	}
 
@@ -86,7 +98,7 @@ func (p *ProxyDevice) RemoveSocket() {
 	}
 	delete(instance.Devices, p.deviceName)
 
-	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	op, err := p.srv.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
 		log.Errorln(err.Error())
 		return
@@ -104,26 +116,25 @@ func (p *ProxyDevice) RemoveSocket() {
 	cmd := fmt.Sprintf("rm -f %s", target)
 	stdout := buffer.NewOutputBuffer()
 	stderr := buffer.NewOutputBuffer()
-	ie := &InstanceExec{
-		Server:   p.Server,
+	ie := p.srv.NewInstanceExec(InstanceExec{
 		Instance: instance.Name,
 		Cmd:      cmd,
 		Stdout:   stdout,
 		Stderr:   stderr,
-	}
+	})
 	ret, err := ie.Exec()
 
 	if ret != 0 {
-		log.Errorln(err.Error())
+		log.Errorf("instance exec: %w", err)
 	}
 
 	log.Debugf("proxy-device: removed %#v", p)
 }
 
 func (p *ProxyDevice) AddPort() (string, error) {
-	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	instance, etag, err := p.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("get instance: %w", err)
 		return "", err
 	}
 
@@ -149,7 +160,7 @@ func (p *ProxyDevice) AddPort() (string, error) {
 	device["bind"] = "host"
 
 	instance.Devices[p.deviceName] = device
-	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	op, err := p.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
 		log.Errorln(err.Error())
 		return "", err
@@ -167,9 +178,9 @@ func (p *ProxyDevice) AddPort() (string, error) {
 }
 
 func (p *ProxyDevice) RemovePort() {
-	instance, etag, err := (*p.Server).GetInstance(p.Instance)
+	instance, etag, err := p.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("get instance: %w", err)
 		return
 	}
 
@@ -180,9 +191,9 @@ func (p *ProxyDevice) RemovePort() {
 	}
 	delete(instance.Devices, p.deviceName)
 
-	op, err := (*p.Server).UpdateInstance(instance.Name, instance.Writable(), etag)
+	op, err := p.srv.UpdateInstance(instance.Name, instance.Writable(), etag)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorf("update instance: %w", err)
 		return
 	}
 
