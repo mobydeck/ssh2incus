@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ssh2incus/pkg/util/buffer"
+	"ssh2incus/pkg/util/cache"
 	uio "ssh2incus/pkg/util/io"
 
 	incus "github.com/lxc/incus/v6/client"
@@ -15,9 +16,12 @@ import (
 )
 
 var (
-	fileExistsCache    = make(map[string]time.Time)
-	fileExistsCacheTtl = time.Minute * 3
+	fileExistsCache *cache.Cache
 )
+
+func init() {
+	fileExistsCache = cache.New(20*time.Minute, 30*time.Minute)
+}
 
 func (s *Server) UploadFile(project, instance string, src string, dest string) error {
 	info, err := os.Stat(src)
@@ -59,11 +63,8 @@ func (s *Server) FileExists(project, instance, path, md5sum string, cache bool) 
 	var fileHash string
 	if cache {
 		fileHash = FileHash(project, instance, path, md5sum)
-		if t, ok := fileExistsCache[fileHash]; ok {
-			if time.Now().Sub(t) < fileExistsCacheTtl {
-				return true
-			}
-			delete(fileExistsCache, fileHash)
+		if _, ok := fileExistsCache.Get(fileHash); ok {
+			return true
 		}
 	}
 
@@ -98,7 +99,7 @@ func (s *Server) FileExists(project, instance, path, md5sum string, cache bool) 
 		}
 	}
 	if cache {
-		fileExistsCache[fileHash] = time.Now()
+		fileExistsCache.SetDefault(fileHash, true)
 	}
 	return true
 }

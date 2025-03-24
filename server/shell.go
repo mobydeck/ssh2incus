@@ -129,7 +129,7 @@ func shellHandler(s ssh.Session) {
 	// User handling
 	var iu *incus.InstanceUser
 	if lu.InstanceUser != "" {
-		iu = server.GetInstanceUser(lu.Instance, lu.InstanceUser)
+		iu = server.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
 	}
 
 	if iu == nil {

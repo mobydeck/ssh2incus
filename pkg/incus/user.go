@@ -2,13 +2,23 @@ package incus
 
 import (
 	"fmt"
+	"ssh2incus/pkg/util/cache"
 	"strconv"
 	"strings"
+	"time"
 
 	"ssh2incus/pkg/util/buffer"
 
 	log "github.com/sirupsen/logrus"
 )
+
+var (
+	instanceUserCache *cache.Cache
+)
+
+func init() {
+	instanceUserCache = cache.New(20*time.Minute, 30*time.Minute)
+}
 
 type InstanceUser struct {
 	Instance string
@@ -20,7 +30,12 @@ type InstanceUser struct {
 	Ent      string
 }
 
-func (s *Server) GetInstanceUser(instance, user string) *InstanceUser {
+func (s *Server) GetInstanceUser(project, instance, user string) *InstanceUser {
+	cacheKey := instanceUserKey(project, instance, user)
+	if iu, ok := instanceUserCache.Get(cacheKey); ok {
+		return iu.(*InstanceUser)
+	}
+
 	cmd := fmt.Sprintf("getent passwd %s", user)
 	stdout := buffer.NewOutputBuffer()
 	stderr := buffer.NewOutputBuffer()
@@ -51,10 +66,16 @@ func (s *Server) GetInstanceUser(instance, user string) *InstanceUser {
 			Ent:      stdout.Lines()[0],
 		}
 
+		instanceUserCache.SetDefault(cacheKey, iu)
+
 		return iu
 	}
 
 	log.Debugf("couldn't find user %s or instance %s", user, instance)
 
 	return nil
+}
+
+func instanceUserKey(project, instance, user string) string {
+	return fmt.Sprintf("%s/%s/%s", project, instance, user)
 }
