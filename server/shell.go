@@ -183,6 +183,10 @@ func shellHandler(s ssh.Session) {
 
 	// Setup I/O pipes
 	stdin, _, stderr := setupShellPipes(s)
+	defer func() {
+		stdin.Close()
+		stderr.Close()
+	}()
 
 	// Setup window size channel
 	windowChannel := make(incus.WindowChannel)
