@@ -325,22 +325,36 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
 	go func() {
 		defer inWrite.Close() // Ensure we always close the pipe
 
-		// Create a done channel that's closed when the copy is complete
-		done := make(chan struct{})
+		// Use fixed-size buffer to limit memory usage
+		buf := make([]byte, 32*1024) // 32KB buffer
 
-		go func() {
-			io.Copy(inWrite, s)
-			close(done)
-		}()
+		for {
+			// Check if session has ended
+			select {
+			case <-sessionCtx.Done():
+				log.Debug("SSH session closed, closing stdin pipe")
+				return
+			default:
+				// Continue with read operation
+			}
 
-		// Wait for either the session to end or the copy to complete
-		select {
-		case <-sessionCtx.Done():
-			// Session ended, force close the pipe
-			log.Debug("SSH session closed, closing stdin pipe")
-		case <-done:
-			// Copy completed normally (EOF reached)
-			log.Debug("stdin copy completed")
+			// Read with timeout to periodically check session status
+			nr, err := s.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Debugf("Read error from SSH session: %v", err)
+				}
+				return
+			}
+
+			if nr > 0 {
+				// Write to pipe
+				_, err := inWrite.Write(buf[0:nr])
+				if err != nil {
+					log.Debugf("Write error to stdin pipe: %v", err)
+					return
+				}
+			}
 		}
 	}()
 
@@ -348,22 +362,36 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
 	go func() {
 		defer errRead.Close() // Ensure we always close the pipe
 
-		// Create a done channel that's closed when the copy is complete
-		done := make(chan struct{})
+		// Use fixed-size buffer to limit memory usage
+		buf := make([]byte, 32*1024) // 32KB buffer
 
-		go func() {
-			io.Copy(s.Stderr(), errRead)
-			close(done)
-		}()
+		for {
+			// Check if session has ended
+			select {
+			case <-sessionCtx.Done():
+				log.Debug("SSH session closed, closing stderr pipe")
+				return
+			default:
+				// Continue with read operation
+			}
 
-		// Wait for either the session to end or the copy to complete
-		select {
-		case <-sessionCtx.Done():
-			// Session ended, force close the pipe
-			log.Debug("SSH session closed, closing stderr pipe")
-		case <-done:
-			// Copy completed normally (EOF reached)
-			log.Debug("stderr copy completed")
+			// Read from pipe
+			nr, err := errRead.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Debugf("Read error from stderr pipe: %v", err)
+				}
+				return
+			}
+
+			if nr > 0 {
+				// Write to session stderr
+				_, err := s.Stderr().Write(buf[0:nr])
+				if err != nil {
+					log.Debugf("Write error to SSH session stderr: %v", err)
+					return
+				}
+			}
 		}
 	}()
 
