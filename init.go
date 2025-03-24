@@ -2,6 +2,8 @@ package ssh2incus
 
 import (
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"path"
 	"reflect"
@@ -35,19 +37,21 @@ var app *App
 var (
 	idleTimeout = 180 * time.Second
 
-	flagDebug      = false
-	flagBanner     = false
-	flagListen     = ":2222"
-	flagHelp       = false
-	flagSocket     = ""
-	flagURL        = ""
-	flagRemote     = ""
-	flagClientCert = ""
-	flagClientKey  = ""
-	flagServerCert = ""
-	flagNoauth     = false
-	flagGroups     = "incus"
-	flagShell      = ""
+	flagDebug       = false
+	flagPprof       = false
+	flagBanner      = false
+	flagListen      = ":2222"
+	flagHelp        = false
+	flagSocket      = ""
+	flagURL         = ""
+	flagRemote      = ""
+	flagClientCert  = ""
+	flagClientKey   = ""
+	flagServerCert  = ""
+	flagNoauth      = false
+	flagGroups      = "incus"
+	flagPprofListen = ":6060"
+	flagShell       = ""
 
 	flagHealthCheck = ""
 
@@ -70,6 +74,7 @@ func init() {
 
 	flag.BoolVarP(&flagHelp, "help", "h", flagHelp, "print help")
 	flag.BoolVarP(&flagDebug, "debug", "d", flagDebug, "enable debug log")
+	flag.BoolVarP(&flagPprof, "pprof", "", flagPprof, "enable pprof")
 	flag.BoolVarP(&flagBanner, "banner", "b", flagBanner, "show banner on login")
 	flag.BoolVarP(&flagNoauth, "noauth", "", flagNoauth, "disable SSH authentication completely")
 	flag.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su or default shell")
@@ -82,8 +87,15 @@ func init() {
 	flag.StringVarP(&flagClientKey, "client-key", "k", flagClientKey, "client key for remote")
 	flag.StringVarP(&flagServerCert, "server-cert", "t", flagServerCert, "server certificate for remote")
 	flag.StringVarP(&flagGroups, "groups", "g", flagGroups, "list of groups members of which allowed to connect")
+	flag.StringVarP(&flagPprofListen, "pprof-listen", "", flagPprofListen, "pprof listen on :6060 or 127.0.0.1:6060")
 	flag.StringVarP(&flagHealthCheck, "healthcheck", "", flagHealthCheck, "enable Incus health check every X minutes, e.g. \"5m\"")
 	flag.Parse()
+
+	if flagPprof {
+		go func() {
+			http.ListenAndServe(flagPprofListen, nil)
+		}()
+	}
 
 	if flagHelp {
 		fmt.Printf("%s\n\n", app.LongName)
