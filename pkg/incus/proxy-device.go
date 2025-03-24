@@ -14,6 +14,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	ProxyDeviceSocket = "socket"
+	ProxyDevicePort   = "port"
+)
+
 type ProxyDevice struct {
 	srv *Server
 
@@ -26,6 +31,7 @@ type ProxyDevice struct {
 
 	deviceName string
 	target     string
+	typ        string
 }
 
 func (s *Server) NewProxyDevice(d ProxyDevice) *ProxyDevice {
@@ -40,7 +46,22 @@ func (s *Server) NewProxyDevice(d ProxyDevice) *ProxyDevice {
 	}
 }
 
+func (p *ProxyDevice) ID() string {
+	return fmt.Sprintf("%s/%s/%s", p.Project, p.Instance, p.deviceName)
+}
+
+func (p *ProxyDevice) Shutdown() error {
+	switch p.typ {
+	case ProxyDeviceSocket:
+		p.RemoveSocket()
+	case ProxyDevicePort:
+		p.RemovePort()
+	}
+	return nil
+}
+
 func (p *ProxyDevice) AddSocket() (string, error) {
+	p.typ = ProxyDeviceSocket
 	instance, etag, err := p.srv.srv.GetInstance(p.Instance)
 	if err != nil {
 		log.Errorf("get instance: %w", err)
@@ -48,7 +69,7 @@ func (p *ProxyDevice) AddSocket() (string, error) {
 	}
 
 	tmpDir := "/tmp"
-	p.deviceName = "incus-proxy-socket-" + strconv.FormatInt(time.Now().UnixNano(), 16) + util.RandomStringLower(5)
+	p.deviceName = "ssh2incus-proxy-socket-" + strconv.FormatInt(time.Now().UnixNano(), 16) + util.RandomStringLower(5)
 	p.target = path.Join(tmpDir, p.deviceName+".sock")
 
 	_, ok := instance.Devices[p.deviceName]
@@ -132,6 +153,7 @@ func (p *ProxyDevice) RemoveSocket() {
 }
 
 func (p *ProxyDevice) AddPort() (string, error) {
+	p.typ = ProxyDevicePort
 	instance, etag, err := p.srv.GetInstance(p.Instance)
 	if err != nil {
 		log.Errorf("get instance: %w", err)
@@ -144,7 +166,7 @@ func (p *ProxyDevice) AddPort() (string, error) {
 		return "", err
 	}
 
-	p.deviceName = fmt.Sprintf("incus-proxy-port-%d", port)
+	p.deviceName = fmt.Sprintf("ssh2incus-proxy-port-%d", port)
 	p.target = fmt.Sprintf("%d", port)
 
 	_, ok := instance.Devices[p.deviceName]

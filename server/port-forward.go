@@ -145,6 +145,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 		if port, err := p.AddPort(); err == nil {
 			u64, _ := strconv.ParseUint(port, 10, 32)
 			d.DestPort = uint32(u64)
+			deviceRegistry.AddDevice(p)
 			defer p.RemovePort()
 		} else {
 			log.Errorf("port forwarding: %w", err)

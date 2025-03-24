@@ -167,6 +167,7 @@ func shellHandler(s ssh.Session) {
 
 		if socket, err := d.AddSocket(); err == nil {
 			env["SSH_AUTH_SOCK"] = socket
+			deviceRegistry.AddDevice(d)
 			defer d.RemoveSocket()
 		} else {
 			log.Errorf("Failed to add socket: %w", err)
