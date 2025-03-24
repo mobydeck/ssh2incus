@@ -179,39 +179,16 @@ func shellHandler(s ssh.Session) {
 	log.Debugf("shell env: %v", env)
 
 	// Setup I/O pipes
-	//stdin, stderr := setupShellPipes(s)
-	//defer func() {
-	//	stdin.Close()
-	//	stderr.Close()
-	//}()
-
-	// Setup window size channel
-	//windowChannel := make(incus.WindowChannel)
-	//defer close(windowChannel)
-	//
-	//go func() {
-	//	for win := range winCh {
-	//		windowChannel <- incus.Window{Width: win.Width, Height: win.Height}
-	//	}
-	//}()
-
-	stdin, inWrite := io.Pipe()
-	errRead, stderr := io.Pipe()
+	stdin, stderr := setupShellPipes(s)
 	defer func() {
 		stdin.Close()
-		errRead.Close()
 		stderr.Close()
 	}()
 
-	go func(s ssh.Session, w io.WriteCloser) {
-		io.Copy(w, s)
-	}(s, inWrite)
-
-	go func(s ssh.Session, e io.ReadCloser) {
-		io.Copy(s.Stderr(), e)
-	}(s, errRead)
-
+	//Setup window size channel
 	windowChannel := make(incus.WindowChannel)
+	defer close(windowChannel)
+
 	go func() {
 		for win := range winCh {
 			windowChannel <- incus.Window{Width: win.Width, Height: win.Height}
