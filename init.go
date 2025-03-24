@@ -92,6 +92,7 @@ func init() {
 	flag.Parse()
 
 	if flagPprof {
+		log.Info("Enabling pprof on %s", flagPprofListen)
 		go func() {
 			http.ListenAndServe(flagPprofListen, nil)
 		}()

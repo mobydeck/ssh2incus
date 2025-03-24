@@ -318,80 +318,54 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
 	stdin, inWrite := io.Pipe()
 	errRead, stderr := io.Pipe()
 
-	// Context tied to the session lifecycle
-	ctx, cancel := context.WithCancel(context.Background())
+	// Get the session's context to track when it ends
+	sessionCtx := s.Context()
 
-	// Set up cancellation when the session ends
+	// First goroutine: handle stdin
 	go func() {
-		// This will block until the session is closed
-		<-s.Context().Done()
-		cancel() // Cancel our context when session ends
+		defer inWrite.Close() // Ensure we always close the pipe
+
+		// Create a done channel that's closed when the copy is complete
+		done := make(chan struct{})
+
+		go func() {
+			io.Copy(inWrite, s)
+			close(done)
+		}()
+
+		// Wait for either the session to end or the copy to complete
+		select {
+		case <-sessionCtx.Done():
+			// Session ended, force close the pipe
+			log.Debug("SSH session closed, closing stdin pipe")
+		case <-done:
+			// Copy completed normally (EOF reached)
+			log.Debug("stdin copy completed")
+		}
 	}()
 
-	// First goroutine: read from session, write to pipe
-	go func(ctx context.Context, s ssh.Session, w io.WriteCloser) {
-		defer w.Close()
+	// Second goroutine: handle stderr
+	go func() {
+		defer errRead.Close() // Ensure we always close the pipe
 
-		// Use a buffer for more efficient copying
-		buf := make([]byte, 32*1024)
-		for {
-			select {
-			case <-ctx.Done():
-				// Session closed, exit the goroutine
-				log.Debugf("Session closed, stopping stdin pipe")
-				return
-			default:
-				// Try to read from the session
-				nr, err := s.Read(buf)
-				if err != nil {
-					if err != io.EOF {
-						log.Debugf("Read error from SSH session: %v", err)
-					}
-					return
-				}
-				if nr > 0 {
-					// Write to the pipe
-					_, err := w.Write(buf[0:nr])
-					if err != nil {
-						log.Debugf("Write error to stdin pipe: %v", err)
-						return
-					}
-				}
-			}
+		// Create a done channel that's closed when the copy is complete
+		done := make(chan struct{})
+
+		go func() {
+			io.Copy(s.Stderr(), errRead)
+			close(done)
+		}()
+
+		// Wait for either the session to end or the copy to complete
+		select {
+		case <-sessionCtx.Done():
+			// Session ended, force close the pipe
+			log.Debug("SSH session closed, closing stderr pipe")
+		case <-done:
+			// Copy completed normally (EOF reached)
+			log.Debug("stderr copy completed")
 		}
-	}(ctx, s, inWrite)
-
-	// Second goroutine: read from pipe, write to session stderr
-	go func(ctx context.Context, s ssh.Session, e io.ReadCloser) {
-		defer e.Close()
-
-		buf := make([]byte, 32*1024)
-		for {
-			select {
-			case <-ctx.Done():
-				// Session closed, exit the goroutine
-				log.Debugf("Session closed, stopping stderr pipe")
-				return
-			default:
-				// Try to read from the pipe
-				nr, err := e.Read(buf)
-				if err != nil {
-					if err != io.EOF {
-						log.Debugf("Read error from stderr pipe: %v", err)
-					}
-					return
-				}
-				if nr > 0 {
-					// Write to the session's stderr
-					_, err := s.Stderr().Write(buf[0:nr])
-					if err != nil {
-						log.Debugf("Write error to SSH session stderr: %v", err)
-						return
-					}
-				}
-			}
-		}
-	}(ctx, s, errRead)
+	}()
 
 	return stdin, s, stderr
 }
