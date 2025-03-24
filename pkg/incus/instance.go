@@ -2,8 +2,10 @@ package incus
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strconv"
+	"sync"
 
 	"ssh2incus/pkg/util/shlex"
 
@@ -61,11 +63,14 @@ type InstanceExec struct {
 
 	execPost api.InstanceExecPost
 	execArgs *incus.InstanceExecArgs
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-func (e *InstanceExec) Exec() (int, error) {
+// BuildExecRequest prepares the execution parameters
+func (e *InstanceExec) BuildExecRequest() {
 	args, _ := shlex.Split(e.Cmd, true)
-
 	log.Debugf("exec: %#v", args)
 
 	e.execPost = api.InstanceExecPost{
@@ -80,66 +85,111 @@ func (e *InstanceExec) Exec() (int, error) {
 		Cwd:         e.Cwd,
 	}
 
-	var ws *websocket.Conn
-	defer func() {
-		if ws != nil {
-			ws.Close()
-		}
-	}()
-
-	control := func(conn *websocket.Conn) {
-		ws = conn
-		go windowResizeListener(e.WinCh, ws)
-		for {
-			_, _, err := ws.ReadMessage()
-			if err != nil {
-				break
-			}
-		}
+	// Setup context with cancellation if not already done
+	if e.ctx == nil {
+		e.ctx, e.cancel = context.WithCancel(context.Background())
 	}
+}
 
-	var errBuf bytes.Buffer
+func (e *InstanceExec) Exec() (int, error) {
+	server := e.srv
 
-	errmw := io.MultiWriter(e.Stderr, &errBuf)
+	e.BuildExecRequest()
+
+	// Setup error capturing
+	errWriter, errBuf := e.setupErrorCapture()
 	defer func() {
 		errs := errBuf.String()
 		if errs != "" {
-			log.Errorln("exec errors: ", errs)
+			log.Errorln("exec errors:", errs)
 		}
 	}()
 
+	// Setup websocket control handler
+	control, wg := e.setupControlHandler()
+
+	// Setup execution args
+	dataDone := make(chan bool)
 	e.execArgs = &incus.InstanceExecArgs{
 		Stdin:    e.Stdin,
 		Stdout:   e.Stdout,
-		Stderr:   errmw,
+		Stderr:   errWriter,
 		Control:  control,
-		DataDone: make(chan bool),
+		DataDone: dataDone,
 	}
 
-	return e.exec()
-}
-
-func (e *InstanceExec) exec() (int, error) {
-	op, err := e.srv.srv.ExecInstance(e.Instance, e.execPost, e.execArgs)
+	// Execute the command
+	op, err := server.srv.ExecInstance(e.Instance, e.execPost, e.execArgs)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Errorln("ExecInstance error:", err)
 		return -1, err
 	}
 
 	log.Debugf("exec meta: %#v", op.Get().Metadata)
 
-	err = op.Wait()
-	if err != nil {
-		log.Errorln(err.Error())
+	// Wait for operation to complete
+	if err = op.Wait(); err != nil {
+		log.Errorln("Operation wait error:", err)
 		return -1, err
 	}
 
-	<-e.execArgs.DataDone
-	opAPI := op.Get()
+	// Wait for data transfer to complete
+	<-dataDone
 
+	// Wait for control handler to finish
+	wg.Wait()
+
+	// Get execution result
+	opAPI := op.Get()
 	ret := int(opAPI.Metadata["return"].(float64))
 
 	return ret, nil
+}
+
+// setupControlHandler prepares the websocket control handler
+func (e *InstanceExec) setupControlHandler() (func(*websocket.Conn), *sync.WaitGroup) {
+	var ws *websocket.Conn
+	var wg sync.WaitGroup
+
+	control := func(conn *websocket.Conn) {
+		ws = conn
+		wg.Add(1)
+		defer wg.Done()
+
+		// Start window resize listener if channel is provided
+		if e.WinCh != nil {
+			go windowResizeListener(e.WinCh, ws)
+		}
+
+		// Read messages until connection is closed or context is canceled
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				_, _, err := ws.ReadMessage()
+				if err != nil {
+					return
+				}
+			}
+		}()
+
+		select {
+		case <-done:
+			return
+		case <-e.ctx.Done():
+			ws.Close()
+			return
+		}
+	}
+
+	return control, &wg
+}
+
+// setupErrorCapture configures error capturing and returns a MultiWriter
+func (e *InstanceExec) setupErrorCapture() (io.Writer, *bytes.Buffer) {
+	var errBuf bytes.Buffer
+	errWriter := io.MultiWriter(e.Stderr, &errBuf)
+	return errWriter, &errBuf
 }
 
 func windowResizeListener(c WindowChannel, ws *websocket.Conn) {
