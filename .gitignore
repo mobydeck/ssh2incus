@@ -4,7 +4,7 @@
 /build
 /release
 /.go
-/server/ssh2incus-sftp-server*
+/server/bin/
 
 /ansible
 Makefile

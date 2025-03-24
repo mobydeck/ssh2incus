@@ -51,33 +51,6 @@ func sftpSubsystemHandler(s ssh.Session) {
 		}
 	}
 
-	//meta, _, _ := incus.GetInstanceMeta(server, instance)
-	//os := strings.ToLower(meta.Properties["os"])
-	//log.Debugln(meta)
-
-	//var md5sum string
-	//if true {
-	//	file, err := os.Open(sftpServerBin)
-	//	if err != nil {
-	//		log.Errorf("cannot open %s on host: %s", sftpServerBin, err)
-	//		io.WriteString(s, fmt.Sprintf("cannot get sftp-server binary\n"))
-	//		s.Exit(2)
-	//		return
-	//	}
-	//	defer file.Close()
-	//
-	//	hash := md5.New()
-	//	_, err = io.Copy(hash, file)
-	//	if err != nil {
-	//		log.Errorf("cannot read %s on host: %s", sftpServerBin, err)
-	//		io.WriteString(s, fmt.Sprintf("cannot get sftp-server binary\n"))
-	//		s.Exit(2)
-	//		return
-	//	}
-	//
-	//	md5sum = fmt.Sprintf("%x", hash.Sum(nil))
-	//}
-
 	meta, _, err := incus.GetInstanceMeta(server, lu.Instance)
 	if err != nil {
 		log.Errorf("cannot get instance meta: %s", err)
@@ -98,10 +71,17 @@ func sftpSubsystemHandler(s ssh.Session) {
 		s.Exit(2)
 		return
 	}
+	sftpServerBinBytes, err = util.Ungz(sftpServerBinBytes)
+	if err != nil {
+		log.Errorf("failed to ungzip sftp-server: %s", err)
+		io.WriteString(s, fmt.Sprintf("failed to prepare sftp-server\n"))
+		s.Exit(2)
+	}
+
 	if !incus.FileExists(server, lu.Project, lu.Instance, sftpServerBinName, util.Md5Bytes(sftpServerBinBytes), true) {
-		err := incus.UploadBytes(server, lu.Project, lu.Instance, sftpServerBinName, bytes.NewReader(sftpServerBinBytes), 0, 0, 0755)
+		err = incus.UploadBytes(server, lu.Project, lu.Instance, sftpServerBinName, bytes.NewReader(sftpServerBinBytes), 0, 0, 0755)
 		if err != nil {
-			log.Errorln(err.Error())
+			log.Errorf("upload failed: %v", err)
 			io.WriteString(s, fmt.Sprintf("sftp-server is not available on %s.%s\n", lu.Instance, lu.Project))
 			s.Exit(2)
 			return

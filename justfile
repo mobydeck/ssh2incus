@@ -38,11 +38,12 @@ build-sftp-server-all:
     just build-sftp-server arm64
 
 build-sftp-server arch:
+    mkdir -p server/bin
     CGO_ENABLED=0 GOOS=linux GOARCH={{arch}} \
         go build -trimpath -ldflags="-s -w -extldflags static" \
-        -o ./server/{{name}}-sftp-server-{{arch}} \
+        -o ./server/bin/{{name}}-sftp-server-{{arch}} \
         cmd/sftp-server/sftp-server.go
-    gzip -9 -f -k ./server/{{name}}-sftp-server-{{arch}}
+    gzip -9 -f -k ./server/bin/{{name}}-sftp-server-{{arch}}
 
 build-all: clean create-dist
     just build-sftp-server-all
