@@ -27,6 +27,7 @@ const (
 type Config struct {
 	IdleTimeout   time.Duration
 	Debug         bool
+	Banner        bool
 	Listen        string
 	Socket        string
 	Noauth        bool
@@ -103,6 +104,10 @@ func Run(c *Config) {
 			"direct-tcpip": directTCPIPHandler,
 		},
 		HostSigners: hostSigners,
+	}
+
+	if config.Banner {
+		server.BannerHandler = bannerHandler
 	}
 
 	// Set up a channel to listen for signals

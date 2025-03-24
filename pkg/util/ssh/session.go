@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"ssh2incus/pkg/util/shlex"
 	"sync"
+
+	"ssh2incus/pkg/util/shlex"
 
 	gossh "golang.org/x/crypto/ssh"
 )
 
 // Session provides access to information about an SSH session and methods
 // to read and write to the SSH channel with an embedded Channel interface from
-// cypto/ssh.
+// crypto/ssh.
 //
 // When Command() returns an empty slice, the user requested a shell. Otherwise
 // the user is performing an exec with those command arguments.
@@ -208,8 +209,6 @@ func (sess *session) Subsystem() string {
 }
 
 func (sess *session) Pty() (Pty, <-chan Window, bool) {
-	sess.Lock()
-	defer sess.Unlock()
 	if sess.pty != nil {
 		return *sess.pty, sess.winch, true
 	}

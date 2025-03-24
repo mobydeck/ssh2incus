@@ -49,6 +49,7 @@ var (
 	flagShell      = ""
 
 	flagHealthCheck = ""
+	flagBanner      = false
 
 	flagVersion = false
 
@@ -69,6 +70,7 @@ func init() {
 
 	flag.BoolVarP(&flagHelp, "help", "h", flagHelp, "print help")
 	flag.BoolVarP(&flagDebug, "debug", "d", flagDebug, "enable debug log")
+	flag.BoolVarP(&flagBanner, "banner", "b", flagBanner, "show banner on login")
 	flag.BoolVarP(&flagNoauth, "noauth", "", flagNoauth, "disable SSH authentication completely")
 	flag.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su or default shell")
 	flag.BoolVarP(&flagVersion, "version", "v", flagVersion, "print version")
@@ -132,6 +134,7 @@ func init() {
 	config := &server.Config{
 		IdleTimeout:   idleTimeout,
 		Debug:         flagDebug,
+		Banner:        flagBanner,
 		Listen:        flagListen,
 		Socket:        flagSocket,
 		Noauth:        flagNoauth,
@@ -146,8 +149,4 @@ func init() {
 		Remote:        flagRemote,
 	}
 	server.Run(config)
-}
-
-func GetApp() App {
-	return *app
 }
