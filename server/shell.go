@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"ssh2incus/pkg/incus"
@@ -179,7 +183,7 @@ func shellHandler(s ssh.Session) {
 	log.Debugf("shell env: %v", env)
 
 	// Setup I/O pipes
-	stdin, stderr := setupShellPipes(s)
+	stdin, stderr := setupShellPipesWithCleanup(s)
 	defer func() {
 		stdin.Close()
 		stderr.Close()
@@ -364,7 +368,204 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.WriteCloser) {
 	return stdin, stderr
 }
 
+func setupShellPipesWithCleanup(s ssh.Session) (io.ReadCloser, io.WriteCloser) {
+	// Create a pipe registry to track all pipe-related resources
+	type pipeResources struct {
+		pipes      []io.Closer
+		goroutines sync.WaitGroup
+	}
+
+	resources := &pipeResources{
+		pipes: make([]io.Closer, 0, 4), // Pre-allocate for expected pipes
+	}
+
+	// Create the pipes
+	stdin, inWrite := io.Pipe()
+	errRead, stderr := io.Pipe()
+
+	// Register all pipes for cleanup
+	resources.pipes = append(resources.pipes, stdin, inWrite, errRead, stderr)
+
+	// Create a context with cancellation for coordinating goroutine termination
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Track session termination
+	sessionDone := make(chan struct{})
+	go func() {
+		<-s.Context().Done()
+		close(sessionDone)
+	}()
+
+	// Clean shutdown function
+	cleanup := func() {
+		// Cancel the context to signal goroutines
+		cancel()
+
+		// Close all pipes to unblock any waiting I/O
+		for _, p := range resources.pipes {
+			p.Close()
+		}
+
+		// Wait for all goroutines to finish with a timeout
+		done := make(chan struct{})
+		go func() {
+			resources.goroutines.Wait()
+			close(done)
+		}()
+
+		// Wait with timeout to avoid hanging
+		select {
+		case <-done:
+			// All goroutines exited cleanly
+		case <-time.After(5 * time.Second):
+			log.Warn("Timeout waiting for pipe goroutines to exit")
+		}
+	}
+
+	// First goroutine: stdin handler
+	resources.goroutines.Add(1)
+	go func() {
+		defer resources.goroutines.Done()
+		defer inWrite.Close() // Always close our end of the pipe
+
+		buf := make([]byte, 8*1024)
+
+		for {
+			// Check if we should terminate
+			select {
+			case <-ctx.Done():
+				return
+			case <-sessionDone:
+				return
+			default:
+				// Continue processing
+			}
+
+			// Set a read deadline to avoid blocking forever
+			if deadline, ok := s.(interface{ SetReadDeadline(time.Time) error }); ok {
+				deadline.SetReadDeadline(time.Now().Add(1 * time.Second))
+			}
+
+			nr, err := s.Read(buf)
+			if err != nil {
+				if err != io.EOF && !isTimeout(err) {
+					log.Debugf("stdin read error: %v", err)
+				}
+				if isTimeout(err) {
+					// Just a timeout, continue the loop
+					continue
+				}
+				return
+			}
+
+			if nr > 0 {
+				_, err := inWrite.Write(buf[:nr])
+				if err != nil {
+					log.Debugf("stdin write error: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
+	// Second goroutine: stderr handler
+	resources.goroutines.Add(1)
+	go func() {
+		defer resources.goroutines.Done()
+		defer errRead.Close() // Always close our end of the pipe
+
+		buf := make([]byte, 8*1024)
+
+		for {
+			// Check if we should terminate
+			select {
+			case <-ctx.Done():
+				return
+			case <-sessionDone:
+				return
+			default:
+				// Continue processing
+			}
+
+			nr, err := errRead.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Debugf("stderr read error: %v", err)
+				}
+				return
+			}
+
+			if nr > 0 {
+				_, err := s.Stderr().Write(buf[:nr])
+				if err != nil {
+					log.Debugf("stderr write error: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
+	// Create wrapper objects that trigger cleanup on Close()
+	cleanupStdin := &cleanupReadCloser{
+		ReadCloser: stdin,
+		cleanup:    cleanup,
+	}
+
+	cleanupStderr := &cleanupWriteCloser{
+		WriteCloser: stderr,
+		cleanup:     cleanup,
+	}
+
+	return cleanupStdin, cleanupStderr
+}
+
 func setWinsize(f *os.File, w, h int) {
 	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ),
 		uintptr(unsafe.Pointer(&struct{ h, w, x, y uint16 }{uint16(h), uint16(w), 0, 0})))
+}
+
+// Helper function to check if an error is a timeout
+func isTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	netErr, ok := err.(net.Error)
+	return ok && netErr.Timeout()
+}
+
+// Wrapper types that ensure cleanup happens on Close()
+type cleanupReadCloser struct {
+	io.ReadCloser
+	cleanup    func()
+	cleanedUp  bool
+	cleanupMux sync.Mutex
+}
+
+func (r *cleanupReadCloser) Close() error {
+	r.cleanupMux.Lock()
+	defer r.cleanupMux.Unlock()
+
+	if !r.cleanedUp {
+		r.cleanup()
+		r.cleanedUp = true
+	}
+	return r.ReadCloser.Close()
+}
+
+type cleanupWriteCloser struct {
+	io.WriteCloser
+	cleanup    func()
+	cleanedUp  bool
+	cleanupMux sync.Mutex
+}
+
+func (w *cleanupWriteCloser) Close() error {
+	w.cleanupMux.Lock()
+	defer w.cleanupMux.Unlock()
+
+	if !w.cleanedUp {
+		w.cleanup()
+		w.cleanedUp = true
+	}
+	return w.WriteCloser.Close()
 }
