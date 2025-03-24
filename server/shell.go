@@ -315,15 +315,80 @@ func setupShellPipes(s ssh.Session) (io.ReadCloser, io.Writer, io.WriteCloser) {
 	stdin, inWrite := io.Pipe()
 	errRead, stderr := io.Pipe()
 
-	go func(s ssh.Session, w io.WriteCloser) {
-		defer w.Close()
-		io.Copy(w, s)
-	}(s, inWrite)
+	// Context tied to the session lifecycle
+	ctx, cancel := context.WithCancel(context.Background())
 
-	go func(s ssh.Session, e io.ReadCloser) {
+	// Set up cancellation when the session ends
+	go func() {
+		// This will block until the session is closed
+		<-s.Context().Done()
+		cancel() // Cancel our context when session ends
+	}()
+
+	// First goroutine: read from session, write to pipe
+	go func(ctx context.Context, s ssh.Session, w io.WriteCloser) {
+		defer w.Close()
+
+		// Use a buffer for more efficient copying
+		buf := make([]byte, 32*1024)
+		for {
+			select {
+			case <-ctx.Done():
+				// Session closed, exit the goroutine
+				log.Debugf("Session closed, stopping stdin pipe")
+				return
+			default:
+				// Try to read from the session
+				nr, err := s.Read(buf)
+				if err != nil {
+					if err != io.EOF {
+						log.Debugf("Read error from SSH session: %v", err)
+					}
+					return
+				}
+				if nr > 0 {
+					// Write to the pipe
+					_, err := w.Write(buf[0:nr])
+					if err != nil {
+						log.Debugf("Write error to stdin pipe: %v", err)
+						return
+					}
+				}
+			}
+		}
+	}(ctx, s, inWrite)
+
+	// Second goroutine: read from pipe, write to session stderr
+	go func(ctx context.Context, s ssh.Session, e io.ReadCloser) {
 		defer e.Close()
-		io.Copy(s.Stderr(), e)
-	}(s, errRead)
+
+		buf := make([]byte, 32*1024)
+		for {
+			select {
+			case <-ctx.Done():
+				// Session closed, exit the goroutine
+				log.Debugf("Session closed, stopping stderr pipe")
+				return
+			default:
+				// Try to read from the pipe
+				nr, err := e.Read(buf)
+				if err != nil {
+					if err != io.EOF {
+						log.Debugf("Read error from stderr pipe: %v", err)
+					}
+					return
+				}
+				if nr > 0 {
+					// Write to the session's stderr
+					_, err := s.Stderr().Write(buf[0:nr])
+					if err != nil {
+						log.Debugf("Write error to SSH session stderr: %v", err)
+						return
+					}
+				}
+			}
+		}
+	}(ctx, s, errRead)
 
 	return stdin, s, stderr
 }
