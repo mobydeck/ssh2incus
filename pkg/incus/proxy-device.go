@@ -1,6 +1,7 @@
 package incus
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -106,9 +107,14 @@ func (p *ProxyDevice) AddSocket() (string, error) {
 }
 
 func (p *ProxyDevice) RemoveSocket() {
+	err := p.srv.Connect(context.Background())
+	if err != nil {
+		return
+	}
+	defer p.srv.Disconnect()
 	instance, etag, err := p.srv.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorf("get instance: %w", err)
+		log.Errorf("get instance: %v", err)
 		return
 	}
 
@@ -200,9 +206,14 @@ func (p *ProxyDevice) AddPort() (string, error) {
 }
 
 func (p *ProxyDevice) RemovePort() {
+	err := p.srv.Connect(context.Background())
+	if err != nil {
+		return
+	}
+	defer p.srv.Disconnect()
 	instance, etag, err := p.srv.GetInstance(p.Instance)
 	if err != nil {
-		log.Errorf("proxy-device: get instance: %w", err)
+		log.Errorf("proxy-device: get instance: %v", err)
 		return
 	}
 
