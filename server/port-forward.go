@@ -83,7 +83,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 			return
 		}
 
-		log.Debugf("Instance State Meta: %#v", meta)
+		//log.Debugf("Instance State Meta: %#v", meta)
 
 		network := api.InstanceStateNetwork{}
 		for d, v := range meta.Network {
@@ -148,7 +148,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 			deviceRegistry.AddDevice(p)
 			defer p.RemovePort()
 		} else {
-			log.Errorf("port forwarding: %v", err)
+			log.Errorf("add port forwarding: %v", err)
 		}
 	}
 
@@ -172,106 +172,21 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 	}
 	go gossh.DiscardRequests(reqs)
 
-	// Create channels for signaling completion and context monitoring
-	done := make(chan struct{}, 2)
-	ctxDone := make(chan struct{}, 1)
-
-	// Monitor context for cancellation
+	done := make(chan bool, 2)
 	go func() {
-		select {
-		case <-ctx.Done():
-			log.Debugf("context canceled for port-forwarding on %s", dest)
-			ctxDone <- struct{}{}
-		case <-done:
-			// One of the copy operations finished, no need to monitor context anymore
-			return
-		}
+		defer ch.Close()
+		defer dconn.Close()
+		io.Copy(ch, dconn)
+		done <- true
+	}()
+	go func() {
+		defer ch.Close()
+		defer dconn.Close()
+		io.Copy(dconn, ch)
+		done <- true
 	}()
 
-	// Copy from the SSH channel to the TCP connection
-	go func() {
-		defer func() {
-			ch.Close()
-			dconn.Close()
-			done <- struct{}{}
-		}()
-
-		// Use io.Copy but monitor for context cancellation
-		buf := make([]byte, 32*1024)
-		for {
-			select {
-			case <-ctxDone:
-				return
-			default:
-				nr, err := ch.Read(buf)
-				if err != nil {
-					if err != io.EOF {
-						log.Debugf("read error from SSH channel: %v", err)
-					}
-					return
-				}
-				if nr > 0 {
-					nw, err := dconn.Write(buf[0:nr])
-					if err != nil {
-						log.Debugf("write error to TCP connection: %v", err)
-						return
-					}
-					if nw != nr {
-						log.Debugf("short write to TCP connection")
-						return
-					}
-				}
-			}
-		}
-	}()
-
-	// Copy from the TCP connection to the SSH channel
-	go func() {
-		defer func() {
-			ch.Close()
-			dconn.Close()
-			done <- struct{}{}
-		}()
-
-		// Use io.Copy but monitor for context cancellation
-		buf := make([]byte, 32*1024)
-		for {
-			select {
-			case <-ctxDone:
-				return
-			default:
-				nr, err := dconn.Read(buf)
-				if err != nil {
-					if err != io.EOF {
-						log.Debugf("read error from TCP connection: %v", err)
-					}
-					return
-				}
-				if nr > 0 {
-					nw, err := ch.Write(buf[0:nr])
-					if err != nil {
-						log.Debugf("write error to SSH channel: %v", err)
-						return
-					}
-					if nw != nr {
-						log.Debugf("short write to SSH channel")
-						return
-					}
-				}
-			}
-		}
-	}()
-
-	// Wait for either both copy operations to complete or context cancellation
-	select {
-	case <-ctx.Done():
-		log.Debugf("context canceled, closing port-forwarding on %s for %#v", dest, lu)
-		ch.Close()
-		dconn.Close()
-	case <-done:
-		// Wait for the other goroutine to finish as well
-		<-done
-	}
-
+	<-done
+	<-done
 	log.Debugf("done with local port-forwarding on %s for %#v", dest, lu)
 }
