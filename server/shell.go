@@ -216,10 +216,13 @@ func shellHandler(s ssh.Session) {
 
 	ret, err := ie.Exec()
 	if err != nil {
-		log.Debugf("shell: connection failed: %v", err)
+		log.Errorf("shell exec failed: %v", err)
 	}
 
-	s.Exit(ret)
+	err = s.Exit(ret)
+	if err != nil {
+		log.Errorf("ssh session exit failed: %v", err)
+	}
 }
 
 func incusShell(s ssh.Session) {
@@ -300,7 +303,7 @@ Hit Enter or type 'help' for help
 	}
 
 	// Wait for the command to finish and check for errors
-	if err := cmd.Wait(); err != nil {
+	if err = cmd.Wait(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			s.Exit(exitErr.ExitCode())
 		} else {

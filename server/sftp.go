@@ -150,8 +150,11 @@ func sftpSubsystemHandler(s ssh.Session) {
 	ret, err := ie.Exec()
 	if err != nil {
 		io.WriteString(s, "sftp connection failed\n")
-		log.Errorf("sftp: connection failed: %s", err)
+		log.Errorf("sftp exec failed: %s", err)
 	}
 
-	s.Exit(ret)
+	err = s.Exit(ret)
+	if err != nil {
+		log.Errorf("sftp session exit failed: %v", err)
+	}
 }
