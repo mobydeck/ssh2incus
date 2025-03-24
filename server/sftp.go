@@ -106,6 +106,11 @@ func sftpSubsystemHandler(s ssh.Session) {
 
 	stdin, inWrite := io.Pipe()
 	errRead, stderr := io.Pipe()
+	defer func() {
+		stdin.Close()
+		stderr.Close()
+		errRead.Close()
+	}()
 
 	go func(s ssh.Session, w io.WriteCloser) {
 		defer w.Close()
