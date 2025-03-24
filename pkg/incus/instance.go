@@ -24,9 +24,15 @@ func (s *Server) GetInstanceMeta(instance string) (*api.ImageMetadata, string, e
 	return meta, etag, err
 }
 
-func (s *Server) DeleteInstanceDevice(i *api.Instance, name, etag string) error {
+func (s *Server) DeleteInstanceDevice(i *api.Instance, name string) error {
 	if !strings.HasPrefix(name, ProxyDevicePrefix) {
 		return nil
+	}
+
+	// Need new ETag for each operation
+	i, etag, err := s.GetInstance(i.Name)
+	if err != nil {
+		return fmt.Errorf("failed to get instance %s.%s: %v", i.Name, i.Project, err)
 	}
 
 	device, ok := i.Devices[name]

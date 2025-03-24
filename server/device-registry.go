@@ -39,16 +39,11 @@ func cleanLeftoverProxyDevices() error {
 			log.Errorf("use project %s: %v", i.Project, err)
 			return err
 		}
-		instance, etag, err := server.GetInstance(i.Name)
-		if err != nil {
-			log.Errorf("failed to get instance %s.%s: %v", i.Name, i.Project, err)
-			continue
-		}
 
 		for device, _ := range i.Devices {
-			err = server.DeleteInstanceDevice(instance, device, etag)
+			err = server.DeleteInstanceDevice(&i, device)
 			if err != nil {
-				log.Errorf("delete instance %s.%s device %s: %v", i.Name, i.Project, deviceRegistry, err)
+				log.Errorf("delete instance %s.%s device %s: %v", i.Name, i.Project, device, err)
 				continue
 			}
 			log.Infof("deleted leftover device %s on instance %s.%s", device, i.Name, i.Project)
