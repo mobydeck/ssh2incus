@@ -24,5 +24,5 @@ func bannerHandler(ctx ssh.Context) string {
 			lu.InstanceUser, lu.Instance, lu.Project,
 		)
 	}
-	return banner
+	return banner + "\n"
 }

@@ -24,7 +24,7 @@ type LoginUser struct {
 
 var (
 	loginUserCache    = make(map[string]time.Time)
-	loginUserCacheTtl = time.Second * 60
+	loginUserCacheTtl = time.Minute * 15
 )
 
 func (lu LoginUser) IsDefaultProject() bool {

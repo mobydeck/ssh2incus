@@ -36,6 +36,7 @@ var (
 	idleTimeout = 180 * time.Second
 
 	flagDebug      = false
+	flagBanner     = false
 	flagListen     = ":2222"
 	flagHelp       = false
 	flagSocket     = ""
@@ -49,7 +50,6 @@ var (
 	flagShell      = ""
 
 	flagHealthCheck = ""
-	flagBanner      = false
 
 	flagVersion = false
 
