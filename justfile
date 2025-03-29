@@ -8,13 +8,19 @@ builtat := `date -u +"%Y-%m-%dT%H:%M:%SZ"`
 
 sysgroups := "incus"
 
+common_build_flags := "-trimpath -ldflags="
+common_ldflags := "-s -w -extldflags static"
+build_flags := common_build_flags + "'" + common_ldflags + "'"
+version_ldflag := " -X " + name + ".version=" + version
+githash_ldflag := " -X " + name + ".gitHash=" + githash
+builtat_ldflag := " -X " + name + ".builtAt=" + builtat
+sysgroups_ldflag := " -X " + name + ".flagGroups=" + sysgroups
+proxy_device_prefix_flag := " -X " + name + "/pkg/incus.ProxyDevicePrefix=" + name + "-proxy"
+ssh2incus_build_flags := common_build_flags + "'" + common_ldflags + version_ldflag + githash_ldflag + builtat_ldflag + sysgroups_ldflag + proxy_device_prefix_flag + "'"
 
 # Default recipe to show available commands
 default:
     @just --list
-
-# Build flags with version information
-build_flags := "-trimpath -ldflags='-s -w -extldflags static -X " + name + ".version=" + version + " -X " + name + ".githash=" + githash + " -X " + name + ".builtat=" + builtat + " -X " + name + ".flagGroups=" + sysgroups + "'"
 
 # Show current version
 version:
@@ -29,7 +35,7 @@ build-for os arch:
     @echo "Building for {{os}} ({{arch}}) version {{version}}..."
     @mkdir -p dist
     CGO_ENABLED=0 GOOS={{os}} GOARCH={{arch}} \
-    go build {{build_flags}} \
+    go build {{ssh2incus_build_flags}} \
         -o ./dist/{{name}}-{{os}}-{{arch}} \
         cmd/{{name}}/{{name}}.go
 
@@ -38,15 +44,29 @@ build-sftp-server-all:
     just build-sftp-server arm64
 
 build-sftp-server arch:
-    mkdir -p server/bin
+    mkdir -p server/sftp-server-binary/bin
     CGO_ENABLED=0 GOOS=linux GOARCH={{arch}} \
-        go build -trimpath -ldflags="-s -w -extldflags static" \
-        -o ./server/bin/{{name}}-sftp-server-{{arch}} \
+        go build {{build_flags}} \
+        -o ./server/sftp-server-binary/bin/{{name}}-sftp-server-{{arch}} \
         cmd/sftp-server/sftp-server.go
-    gzip -9 -f -k ./server/bin/{{name}}-sftp-server-{{arch}}
+    gzip -9 -f -k ./server/sftp-server-binary/bin/{{name}}-sftp-server-{{arch}}
+
+build-stdio-proxy-all:
+    just build-stdio-proxy amd64
+    just build-stdio-proxy arm64
+
+build-stdio-proxy arch:
+    mkdir -p server/stdio-proxy-binary/bin
+    CGO_ENABLED=0 GOOS=linux GOARCH={{arch}} \
+        go build {{build_flags}} \
+        -o ./server/stdio-proxy-binary/bin/{{name}}-stdio-proxy-{{arch}} \
+        cmd/stdio-proxy/stdio-proxy.go
+    gzip -9 -f -k ./server/stdio-proxy-binary/bin/{{name}}-stdio-proxy-{{arch}}
+
 
 build-all: clean create-dist
     just build-sftp-server-all
+    just build-stdio-proxy-all
     just build-for linux amd64
     just build-for linux arm64
     just build-for darwin amd64

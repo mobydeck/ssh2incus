@@ -9,75 +9,94 @@ import (
 	"strings"
 	"time"
 
+	"ssh2incus/pkg/cache"
 	"ssh2incus/pkg/incus"
-	"ssh2incus/pkg/util/user"
+	"ssh2incus/pkg/ssh"
+	"ssh2incus/pkg/user"
 
 	log "github.com/sirupsen/logrus"
 )
 
+var (
+	// ContextKeyLoginUser is a context key for use with Contexts in this package.
+	ContextKeyLoginUser = &contextKey{"loginUser"}
+)
+
+var (
+	loginUserCache *cache.Cache
+)
+
+func init() {
+	loginUserCache = cache.New(15*time.Minute, 20*time.Minute)
+}
+
 type LoginUser struct {
+	OrigUser     string
 	User         string
 	Instance     string
 	Project      string
 	InstanceUser string
+	PublicKey    ssh.PublicKey
 }
 
-var (
-	loginUserCache    = make(map[string]time.Time)
-	loginUserCacheTtl = time.Minute * 15
-)
+func (lu *LoginUser) String() string {
+	if lu == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s@%s.%s+%s", lu.InstanceUser, lu.Instance, lu.Project, lu.User)
+}
 
-func (lu LoginUser) IsDefaultProject() bool {
+func (lu *LoginUser) FullInstance() string {
+	if lu == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s.%s", lu.Instance, lu.Project)
+}
+
+func (lu *LoginUser) IsDefaultProject() bool {
 	return incus.IsDefaultProject(lu.Project)
 }
 
-func (lu LoginUser) IsValid() bool {
-	if t, ok := loginUserCache[lu.Hash()]; ok {
-		if time.Now().Sub(t) < loginUserCacheTtl {
-			return true
-		}
-		delete(loginUserCache, lu.Hash())
-	}
-
-	server, err := NewIncusServer()
-	if err != nil {
-		log.Errorf("failed to initialize incus client: %v", err)
+func (lu *LoginUser) IsValid() bool {
+	if lu == nil {
 		return false
 	}
-
-	err = server.Connect(context.Background())
-	if err != nil {
-		log.Errorf("failed to connect to incus: %v", err)
-		return false
-	}
-	defer server.Disconnect()
 
 	if lu.Instance == "%shell" {
 		return true
 	}
 
-	if !lu.IsDefaultProject() {
-		err = server.UseProject(lu.Project)
-		if err != nil {
-			log.Errorf("using project %s error: %s", lu.Project, err)
-			return false
-		}
+	if _, ok := loginUserCache.Get(lu.Hash()); ok {
+		return true
 	}
 
-	_, _, err = server.GetInstance(lu.Instance)
+	client, err := NewIncusClientWithContext(context.Background(), DefaultParams)
+	if err != nil {
+		log.Error(err)
+		return false
+	}
+	defer client.Disconnect()
+
+	_, _, err = client.GetInstance(lu.Project, lu.Instance)
 	if err != nil {
 		log.Errorf("getting instance %s error: %s", lu.Instance, err)
 		return false
 	}
-	loginUserCache[lu.Hash()] = time.Now()
+	loginUserCache.SetDefault(lu.Hash(), time.Now())
 	return true
 }
 
-func (lu LoginUser) Hash() string {
+func (lu *LoginUser) Hash() string {
+	if lu == nil {
+		return ""
+	}
 	return fmt.Sprintf("%s/%s/%s/%s", lu.User, lu.Project, lu.Instance, lu.InstanceUser)
 }
 
-func (lu LoginUser) InstanceHash() string {
+func (lu *LoginUser) InstanceHash() string {
+	if lu == nil {
+		return ""
+	}
 	return fmt.Sprintf("%s/%s", lu.Project, lu.Instance)
 }
 
@@ -95,7 +114,7 @@ func getUserAuthKeys(u *user.User) ([][]byte, error) {
 
 	f, err := os.Open(filepath.Clean(u.HomeDir + "/.ssh/authorized_keys"))
 	if err != nil {
-		log.Errorf("error with authorized_keys", err)
+		log.Errorf("error with authorized_keys: %v", err)
 		return nil, err
 	}
 	defer f.Close()
@@ -116,8 +135,9 @@ func getUserGroups(u *user.User) ([]string, error) {
 	return groups, nil
 }
 
-func parseUser(user string) LoginUser {
-	lu := LoginUser{}
+func parseLoginUser(user string) *LoginUser {
+	lu := new(LoginUser)
+	lu.OrigUser = user
 	lu.InstanceUser = "root"
 	lu.Project = "default"
 

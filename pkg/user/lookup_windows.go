@@ -10,7 +10,7 @@ import (
 	"os/user"
 )
 
-var errWin = errors.New("luser: you should not get this error")
+var errWin = errors.New("user: you should not get this error")
 
 func currentUser() (*User, error) {
 	u, err := user.Current()

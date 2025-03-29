@@ -4,11 +4,12 @@
 /build
 /release
 /.go
-/server/bin/
 _examples/
+server/sftp-server-binary/bin/
+server/stdio-proxy-binary/bin/
 
 /ansible
 Makefile
-/cmd
+cmd/helper
 /docker*
 /scripts

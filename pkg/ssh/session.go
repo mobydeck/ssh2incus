@@ -5,9 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"ssh2incus/pkg/shlex"
 	"sync"
-
-	"ssh2incus/pkg/util/shlex"
 
 	gossh "golang.org/x/crypto/ssh"
 )

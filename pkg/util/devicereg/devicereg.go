@@ -33,13 +33,15 @@ func (r *DeviceRegistry) AddDevice(device Device) {
 }
 
 // RemoveDevice removes a device from the registry
-func (r *DeviceRegistry) RemoveDevice(id string) {
+func (r *DeviceRegistry) RemoveDevice(device Device) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, exists := r.devices[id]; exists {
-		delete(r.devices, id)
+	if _, exists := r.devices[device.ID()]; exists {
+		delete(r.devices, device.ID())
+		return true
 	}
+	return false
 }
 
 // ShutdownAllDevices gracefully shuts down all devices

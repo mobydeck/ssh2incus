@@ -1,53 +1,64 @@
 package server
 
 import (
-	"ssh2incus/pkg/util/ssh"
+	"ssh2incus/pkg/ssh"
 
 	log "github.com/sirupsen/logrus"
 	gossh "golang.org/x/crypto/ssh"
 )
 
 func keyAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
-	lu := parseUser(ctx.User())
+	lu := parseLoginUser(ctx.User())
+	lu.PublicKey = key
 
 	osUser, err := getOsUser(lu.User)
 	if err != nil {
+		log.Errorf("auth: %s", err)
 		return false
 	}
 
-	if len(config.AllowedGroups) > 0 {
+	if osUser.Uid != "0" && len(config.AllowedGroups) > 0 {
 		userGroups, err := getUserGroups(osUser)
 		if err != nil {
+			log.Errorf("auth: %s", err)
 			return false
 		}
 		if !isGroupMatch(config.AllowedGroups, userGroups) {
-			log.Errorf("auth: no group match for %s in %v", lu.User, userGroups)
+			log.Warnf("auth: no group match for %s in %v", lu.User, userGroups)
 			return false
 		}
 	}
 
-	keys, _ := getUserAuthKeys(osUser)
+	keys, err := getUserAuthKeys(osUser)
+	if err != nil {
+		log.Errorf("auth: %s", err)
+		return false
+	}
+
+	if len(keys) == 0 {
+		log.Warnf("auth: no keys for %s", lu.User)
+	}
+
 	for _, k := range keys {
-		pk, _, _, _, err := ssh.ParseAuthorizedKey(k)
+		pkey, _, _, _, err := ssh.ParseAuthorizedKey(k)
 		if err != nil {
-			log.Debugln(err.Error())
+			log.Errorf("auth: %s", err)
 			continue
 		}
-		if ssh.KeysEqual(pk, key) {
-			ctx.SetValue("LoginUser", lu)
-			log.Debugf("auth succeeded: %s %s key for %#v", key.Type(), gossh.FingerprintSHA256(key), lu)
+		if ssh.KeysEqual(pkey, key) {
+			ctx.SetValue(ContextKeyLoginUser, lu)
+			log.Infof("auth: succeeded %s %s key for %s", key.Type(), gossh.FingerprintSHA256(key), lu)
 			return true
 		}
 	}
 
-	log.Debugf("auth failed: %s %s key for %#v", key.Type(), gossh.FingerprintSHA256(key), lu)
+	log.Warnf("auth: failed %s %s key for %s", key.Type(), gossh.FingerprintSHA256(key), lu)
 	return false
 }
 
 func noAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
-	lu := parseUser(ctx.User())
-
-	ctx.SetValue("LoginUser", lu)
-
+	lu := parseLoginUser(ctx.User())
+	lu.PublicKey = key
+	ctx.SetValue(ContextKeyLoginUser, lu)
 	return true
 }

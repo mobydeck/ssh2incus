@@ -8,49 +8,43 @@ import (
 	"path"
 	"reflect"
 	"runtime"
-	"ssh2incus/server"
 	"strings"
 	"time"
+
+	"ssh2incus/pkg"
+	"ssh2incus/server"
 
 	log "github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 )
 
 var (
+	app     *pkg.App
 	version = "devel"
 	edition = "ce"
-	githash = ""
-	builtat = ""
+	gitHash = ""
+	builtAt = ""
 )
-
-type App struct {
-	Name     string
-	Version  string
-	Edition  string
-	GitHash  string
-	LongName string
-	BuiltAt  string
-}
-
-var app *App
 
 var (
 	idleTimeout = 180 * time.Second
 
+	flagHelp        = false
 	flagDebug       = false
 	flagPprof       = false
+	flagMaster      = false
 	flagBanner      = false
+	flagNoauth      = false
+	flagWelcome     = false
 	flagListen      = ":2222"
-	flagHelp        = false
+	flagPprofListen = ":6060"
+	flagGroups      = "incus"
 	flagSocket      = ""
 	flagURL         = ""
 	flagRemote      = ""
 	flagClientCert  = ""
 	flagClientKey   = ""
 	flagServerCert  = ""
-	flagNoauth      = false
-	flagGroups      = "incus"
-	flagPprofListen = ":6060"
 	flagShell       = ""
 
 	flagHealthCheck = ""
@@ -60,53 +54,75 @@ var (
 	allowedGroups []string
 )
 
+type Package struct{}
+
 func init() {
-	app = new(App)
-	app.Name = reflect.TypeOf(App{}).PkgPath()
-	app.Edition = edition
-	app.Version = version
-	app.GitHash = githash
-	app.BuiltAt = builtat
-	app.LongName = fmt.Sprintf("%s %s", app.Name, app.Version)
-	if app.GitHash != "" {
-		app.LongName += fmt.Sprintf(" (%s)", app.GitHash)
+	app = pkg.NewApp(pkg.AppConfig{
+		Name:    reflect.TypeOf(Package{}).PkgPath(),
+		Version: version,
+		Edition: edition,
+		GitHash: gitHash,
+		BuiltAt: builtAt,
+	})
+
+	var args []string
+	argsEnv := os.Getenv(app.NAME() + "_ARGS")
+	if argsEnv != "" {
+		args = parseArgs(argsEnv)
+	} else if len(os.Args) > 1 {
+		args = os.Args[1:]
 	}
 
-	flag.BoolVarP(&flagHelp, "help", "h", flagHelp, "print help")
-	flag.BoolVarP(&flagDebug, "debug", "d", flagDebug, "enable debug log")
-	flag.BoolVarP(&flagPprof, "pprof", "", flagPprof, "enable pprof")
-	flag.BoolVarP(&flagBanner, "banner", "b", flagBanner, "show banner on login")
-	flag.BoolVarP(&flagNoauth, "noauth", "", flagNoauth, "disable SSH authentication completely")
-	flag.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su or default shell")
-	flag.BoolVarP(&flagVersion, "version", "v", flagVersion, "print version")
-	flag.StringVarP(&flagListen, "listen", "l", flagListen, "listen on :2222 or 127.0.0.1:2222")
-	flag.StringVarP(&flagSocket, "socket", "s", flagSocket, "Incus socket or use INCUS_SOCKET")
-	flag.StringVarP(&flagRemote, "url", "u", flagURL, "Incus remote url starting with https://")
-	flag.StringVarP(&flagRemote, "remote", "r", flagRemote, "Incus remote defined in config.yml, e.g. my-remote")
-	flag.StringVarP(&flagClientCert, "client-cert", "c", flagClientCert, "client certificate for remote")
-	flag.StringVarP(&flagClientKey, "client-key", "k", flagClientKey, "client key for remote")
-	flag.StringVarP(&flagServerCert, "server-cert", "t", flagServerCert, "server certificate for remote")
-	flag.StringVarP(&flagGroups, "groups", "g", flagGroups, "list of groups members of which allowed to connect")
-	flag.StringVarP(&flagPprofListen, "pprof-listen", "", flagPprofListen, "pprof listen on :6060 or 127.0.0.1:6060")
-	flag.StringVarP(&flagHealthCheck, "healthcheck", "", flagHealthCheck, "enable Incus health check every X minutes, e.g. \"5m\"")
-	flag.Parse()
-
-	if flagPprof {
-		log.Info("Enabling pprof on %s", flagPprofListen)
-		go func() {
-			http.ListenAndServe(flagPprofListen, nil)
-		}()
+	flags := flag.NewFlagSet("flags", flag.ExitOnError)
+	flags.BoolVarP(&flagHelp, "help", "h", flagHelp, "print help")
+	flags.BoolVarP(&flagDebug, "debug", "d", flagDebug, "enable debug log")
+	flags.BoolVarP(&flagPprof, "pprof", "", flagPprof, "enable pprof")
+	flags.BoolVarP(&flagMaster, "master", "m", flagMaster, "start master process and spawn workers")
+	flags.BoolVarP(&flagBanner, "banner", "b", flagBanner, "show banner on login")
+	flags.BoolVarP(&flagNoauth, "noauth", "", flagNoauth, "disable SSH authentication completely")
+	flags.BoolVarP(&flagWelcome, "welcome", "w", flagWelcome, "show welcome message to shell users")
+	flags.BoolVarP(&flagVersion, "version", "v", flagVersion, "print version")
+	flags.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su or default shell")
+	flags.StringVarP(&flagListen, "listen", "l", flagListen, "listen on :2222 or 127.0.0.1:2222")
+	flags.StringVarP(&flagSocket, "socket", "s", flagSocket, "Incus socket or use INCUS_SOCKET")
+	flags.StringVarP(&flagRemote, "url", "u", flagURL, "Incus remote url starting with https://")
+	flags.StringVarP(&flagRemote, "remote", "r", flagRemote, "Incus remote defined in config.yml, e.g. my-remote")
+	flags.StringVarP(&flagClientCert, "client-cert", "c", flagClientCert, "client certificate for remote")
+	flags.StringVarP(&flagClientKey, "client-key", "k", flagClientKey, "client key for remote")
+	flags.StringVarP(&flagServerCert, "server-cert", "t", flagServerCert, "server certificate for remote")
+	flags.StringVarP(&flagGroups, "groups", "g", flagGroups, "list of groups members of which allowed to connect")
+	flags.StringVarP(&flagPprofListen, "pprof-listen", "", flagPprofListen, "pprof listen on :6060 or 127.0.0.1:6060")
+	flags.StringVarP(&flagHealthCheck, "healthcheck", "", flagHealthCheck, "enable Incus health check every X minutes, e.g. \"5m\"")
+	err := flags.Parse(args)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	if flagHelp {
-		fmt.Printf("%s\n\n", app.LongName)
-		flag.PrintDefaults()
+		fmt.Printf("%s\n\n", app.LongName())
+		flags.PrintDefaults()
+		fmt.Println()
 		os.Exit(0)
 	}
 
 	if flagVersion {
-		fmt.Printf("%s\nBuilt at: %s\n", app.LongName, app.BuiltAt)
+		fmt.Printf("%s\nBuilt at: %s\n", app.LongName(), app.BuiltAt())
 		os.Exit(0)
+	}
+
+	if flagPprof {
+		if flagMaster {
+			log.Warn("pprof is not supported in master mode")
+			flagPprof = false
+		} else {
+			log.Infof("Enabling pprof on %s", flagPprofListen)
+			go func() {
+				err := http.ListenAndServe(flagPprofListen, nil)
+				if err != nil {
+					log.Fatal(err)
+				}
+			}()
+		}
 	}
 
 	if flagSocket == "" {
@@ -136,21 +152,22 @@ func init() {
 		log.SetLevel(log.InfoLevel)
 	}
 
-	fmt.Printf("Starting %s %s on %s\n", app.Name, app.Version, flagListen)
-
 	if flagNoauth {
-		log.Warn("SSH authentication disabled")
+		log.Warn("ssh authentication disabled")
 	}
 
-	log.Debugf("Debug logging enabled")
+	log.Debugf("DEBUG logging enabled")
 
 	config := &server.Config{
-		IdleTimeout:   idleTimeout,
+		App:           app,
+		Args:          args,
+		Master:        flagMaster,
 		Debug:         flagDebug,
 		Banner:        flagBanner,
 		Listen:        flagListen,
 		Socket:        flagSocket,
 		Noauth:        flagNoauth,
+		Welcome:       flagWelcome,
 		Shell:         flagShell,
 		Groups:        flagGroups,
 		HealthCheck:   flagHealthCheck,
@@ -160,6 +177,51 @@ func init() {
 		ServerCert:    flagServerCert,
 		URL:           flagURL,
 		Remote:        flagRemote,
+		IdleTimeout:   idleTimeout,
 	}
-	server.Run(config)
+
+	server.WithConfig(config).Run()
+}
+
+// parseArgs parses a string into command-line arguments,
+// handling quoted sections properly
+func parseArgs(s string) []string {
+	var args []string
+	var currentArg strings.Builder
+	inQuotes := false
+	escapeNext := false
+
+	for _, r := range s {
+		if escapeNext {
+			currentArg.WriteRune(r)
+			escapeNext = false
+			continue
+		}
+
+		if r == '\\' {
+			escapeNext = true
+			continue
+		}
+
+		if r == '"' {
+			inQuotes = !inQuotes
+			continue
+		}
+
+		if r == ' ' && !inQuotes {
+			if currentArg.Len() > 0 {
+				args = append(args, currentArg.String())
+				currentArg.Reset()
+			}
+			continue
+		}
+
+		currentArg.WriteRune(r)
+	}
+
+	if currentArg.Len() > 0 {
+		args = append(args, currentArg.String())
+	}
+
+	return args
 }

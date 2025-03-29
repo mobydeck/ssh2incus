@@ -26,7 +26,7 @@ func lookupGroup(name string) (*Group, error) {
 }
 
 func lookupGroupId(gid string) (*Group, error) {
-	id, err := strconv.Atoi(gid)
+	_, err := strconv.Atoi(gid)
 	if err != nil {
 		return nil, err
 	}
@@ -43,5 +43,5 @@ func lookupGroupId(gid string) (*Group, error) {
 		return lgroup(g), nil
 	}
 
-	return nil, UnknownGroupIdError(id)
+	return nil, UnknownGroupIdError(gid)
 }

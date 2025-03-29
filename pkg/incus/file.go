@@ -5,28 +5,34 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
+	"ssh2incus/pkg/cache"
+	"ssh2incus/pkg/queue"
 	"ssh2incus/pkg/util/buffer"
-	"ssh2incus/pkg/util/cache"
 	uio "ssh2incus/pkg/util/io"
 
 	incus "github.com/lxc/incus/v6/client"
-	log "github.com/sirupsen/logrus"
 )
 
 var (
 	fileExistsCache *cache.Cache
+	fileExistsQueue *queue.Queueable[bool]
+	fileExistsOnce  sync.Once
 )
 
 func init() {
-	fileExistsCache = cache.New(20*time.Minute, 30*time.Minute)
+	fileExistsOnce.Do(func() {
+		fileExistsCache = cache.New(20*time.Minute, 30*time.Minute)
+		fileExistsQueue = queue.New[bool](10000)
+	})
 }
 
-func (s *Server) UploadFile(project, instance string, src string, dest string) error {
+func (c *Client) UploadFile(project, instance string, src string, dest string) error {
 	info, err := os.Stat(src)
 	if err != nil {
-		log.Errorf("couldn't stat file %s", src)
+		//log.Debugf("couldn't stat file %s", src)
 		return err
 	}
 
@@ -34,17 +40,17 @@ func (s *Server) UploadFile(project, instance string, src string, dest string) e
 
 	f, err := os.OpenFile(src, os.O_RDONLY, 0)
 	if err != nil {
-		log.Errorf("couldn't open file %s for reading", src)
+		//log.Debugf("couldn't open file %s for reading", src)
 		return err
 	}
 	defer f.Close()
 
-	err = s.UploadBytes(project, instance, dest, f, int64(uid), int64(gid), int(mode.Perm()))
+	err = c.UploadBytes(project, instance, dest, f, int64(uid), int64(gid), int(mode.Perm()))
 
 	return err
 }
 
-func (s *Server) UploadBytes(project, instance, dest string, b io.ReadSeeker, uid, gid int64, mode int) error {
+func (c *Client) UploadBytes(project, instance, dest string, b io.ReadSeeker, uid, gid int64, mode int) error {
 	args := incus.InstanceFileArgs{
 		Content:   b,
 		UID:       uid,
@@ -54,54 +60,73 @@ func (s *Server) UploadBytes(project, instance, dest string, b io.ReadSeeker, ui
 		WriteMode: "overwrite",
 	}
 
-	err := s.srv.CreateInstanceFile(instance, dest, args)
+	err := c.srv.CreateInstanceFile(instance, dest, args)
 
 	return err
 }
 
-func (s *Server) FileExists(project, instance, path, md5sum string, cache bool) bool {
-	var fileHash string
-	if cache {
-		fileHash = FileHash(project, instance, path, md5sum)
-		if _, ok := fileExistsCache.Get(fileHash); ok {
-			return true
+type FileExistsParams struct {
+	Project     string
+	Instance    string
+	Path        string
+	Md5sum      string
+	ShouldCache bool
+}
+
+func (c *Client) FileExists(params *FileExistsParams) bool {
+	return queue.EnqueueFnWithParam(fileExistsQueue, func(p *FileExistsParams) bool {
+		var fileHash string
+		if p.ShouldCache {
+			fileHash = FileHash(p.Project, p.Instance, p.Path, p.Md5sum)
+			if exists, ok := fileExistsCache.Get(fileHash); ok {
+				//log.Debugf("file cache hit for %s", fileHash)
+				return exists.(bool)
+			}
+			//log.Debugf("file cache miss for %s", fileHash)
 		}
-	}
 
-	stdout := buffer.NewOutputBuffer()
-	stderr := buffer.NewOutputBuffer()
-	cmd := fmt.Sprintf("test -f %s", path)
-	ie := s.NewInstanceExec(InstanceExec{
-		Instance: instance,
-		Cmd:      cmd,
-		Stdout:   stdout,
-		Stderr:   stderr,
-	})
-	ret, _ := ie.Exec()
-
-	if ret != 0 {
-		return false
-	}
-
-	if md5sum != "" {
-		ie.Cmd = fmt.Sprintf("md5sum %s", path)
+		stdout := buffer.NewOutputBuffer()
+		stderr := buffer.NewOutputBuffer()
+		cmd := fmt.Sprintf("test -f %s", p.Path)
+		ie := c.NewInstanceExec(InstanceExec{
+			Instance: p.Instance,
+			Cmd:      cmd,
+			Stdout:   stdout,
+			Stderr:   stderr,
+		})
 		ret, _ := ie.Exec()
+
 		if ret != 0 {
-			log.Error(stderr.Lines()[0])
 			return false
 		}
-		m := strings.Split(stdout.Lines()[0], " ")
-		log.Debugf("comparing md5 for %s: %s %s", path, md5sum, m[0])
-		if md5sum == m[0] {
-			return true
-		} else {
-			return false
+
+		exists := true
+
+		if p.Md5sum != "" {
+			ie.Cmd = fmt.Sprintf("md5sum %s", p.Path)
+			ret, _ := ie.Exec()
+			if ret != 0 {
+				//log.Debug(stderr.Lines())
+				return false
+			}
+			out := stdout.Lines()
+			if len(out) == 0 {
+				return false
+			}
+			m := strings.Split(out[0], " ")
+			if len(m) < 2 {
+				return false
+			}
+			//log.Debugf("comparing md5 for %s: %s <=> %s", p.Path, p.Md5sum, m[0])
+			exists = p.Md5sum == m[0]
 		}
-	}
-	if cache {
-		fileExistsCache.SetDefault(fileHash, true)
-	}
-	return true
+
+		if p.ShouldCache && exists {
+			fileExistsCache.SetDefault(fileHash, exists)
+		}
+
+		return exists
+	}, params)
 }
 
 func FileHash(project, instance, path, md5sum string) string {

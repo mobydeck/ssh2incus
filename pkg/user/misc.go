@@ -7,10 +7,10 @@ import (
 )
 
 // ErrListGroups returned when LookupGroupId() has no fallback.
-var ErrListGroups = errors.New("luser: unable to list groups")
+var ErrListGroups = errors.New("user: unable to list groups")
 
 // ErrCurrentUser returned when Current() fails to get the user.
-var ErrCurrentUser = errors.New("luser: unable to get current user")
+var ErrCurrentUser = errors.New("user: unable to get current user")
 
 // Generic internal error indicating that a search function did its job but
 // still couldn't find a user/group.

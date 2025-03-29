@@ -274,7 +274,19 @@ func (srv *Server) Serve(l net.Listener) error {
 }
 
 func (srv *Server) HandleConn(newConn net.Conn) {
-	ctx, cancel := newContext(srv)
+	ctx, cancel := NewContext(srv)
+	ctx.SetValue(ContextKeyCancelFunc, cancel)
+	srv.HandleConnWithContext(newConn, ctx)
+}
+
+func (srv *Server) HandleConnWithContext(newConn net.Conn, ctx *sshContext) {
+	cancel, ok := ctx.Value(ContextKeyCancelFunc).(context.CancelFunc)
+	if !ok {
+		//var newCtx context.Context
+		//newCtx, cancel = context.WithCancel(ctx)
+		//ctx.Context = newCtx
+		cancel = func() {}
+	}
 	if srv.ConnCallback != nil {
 		cbConn := srv.ConnCallback(ctx, newConn)
 		if cbConn == nil {
@@ -287,6 +299,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 		Conn:          newConn,
 		idleTimeout:   srv.IdleTimeout,
 		closeCanceler: cancel,
+		maxDeadline:   time.Time{},
 	}
 	if srv.MaxTimeout > 0 {
 		conn.maxDeadline = time.Now().Add(srv.MaxTimeout)

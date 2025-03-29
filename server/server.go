@@ -2,64 +2,296 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	"ssh2incus/pkg/incus"
-	"ssh2incus/pkg/util/ssh"
+	"ssh2incus/pkg/ssh"
 
-	"github.com/lxc/incus/v6/shared/cliconfig"
 	log "github.com/sirupsen/logrus"
 	gossh "golang.org/x/crypto/ssh"
 	"gopkg.in/robfig/cron.v2"
 )
 
-const (
-	ShellSu    = "su"
-	ShellLogin = "login"
-)
-
-type Config struct {
-	IdleTimeout   time.Duration
-	Debug         bool
-	Banner        bool
-	Listen        string
-	Socket        string
-	Noauth        bool
-	Shell         string
-	Groups        string
-	HealthCheck   string
-	AllowedGroups []string
-	IncusSocket   string
-	Remote        string
-	URL           string
-	ClientCert    string
-	ClientKey     string
-	ServerCert    string
-
-	IncusInfo map[string]interface{}
+type contextKey struct {
+	name string
 }
 
-var config *Config
+type Server struct{}
 
-var connectParams *incus.ConnectParams
-
-func Run(c *Config) {
+func WithConfig(c *Config) *Server {
 	config = c
+	return new(Server)
+}
 
-	if err := checkIncus(); err != nil {
-		log.Fatal(err.Error())
+func Run() {
+	new(Server).Run()
+}
+
+// Run initializes and starts the server based on the configuration.
+// It determines whether to serve as a child process, master, or daemon.
+func (s *Server) Run() {
+	if os.Getenv(config.SocketFdEnvName()) != "" {
+		log.Infof("starting %s as child process, pid %d", config.App.Name(), os.Getpid())
+		s.Serve()
+		os.Exit(0)
+	}
+
+	starting := fmt.Sprintf("starting %s on %s as %%s, pid %d", config.App.Name(), config.Listen, os.Getpid())
+	if config.Master {
+		log.Infof(starting, "master process")
+		s.Listen()
+	} else {
+		log.Infof(starting, "daemon")
+		s.ListenAndServe()
+	}
+
+}
+
+// ListenAndServe initializes and starts the server, manages health checks,
+// and handles graceful shutdown upon receiving termination signals.
+func (s *Server) ListenAndServe() {
+	if err := s.checkIncus(); err != nil {
+		log.Fatal(err)
 	}
 
 	if len(config.HealthCheck) > 0 {
-		enableHealthCheck()
+		s.enableHealthCheck()
 	}
 
+	server := setupServer()
+
+	// Set up a channel to listen for signals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	err := cleanLeftoverProxyDevices()
+	if err != nil {
+		log.Errorf("clean leftover devices: %v", err)
+	}
+
+	// Start the server in a goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	// Wait for a signal to gracefully shutdown
+	<-stop
+	log.Info("shutting down server...")
+
+	// Create a context with a 5 second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	log.Debugf("shutting down devices...")
+	err = deviceRegistry.ShutdownAllDevices(ctx)
+	if err != nil {
+		log.Errorf("failed to shutdown devices: %v", err)
+	}
+
+	// Perform graceful shutdown
+	if err = server.Shutdown(ctx); err != nil {
+		log.Fatalf("server shutdown failed: %v", err)
+	}
+
+	log.Info("server gracefully stopped")
+}
+
+// Listen starts a TCP server listening on the configured address.
+// It accepts incoming connections and hands them off to child processes.
+func (s *Server) Listen() {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	listener, err := net.Listen("tcp", config.Listen)
+	if err != nil {
+		log.Fatalf("failed to create listener: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				} else {
+					log.Errorf("failed to accept connection: %v", err)
+					continue
+				}
+			}
+
+			log.Info("connection accepted, handing off to child process")
+			go handoffToChild(conn)
+		}
+	}()
+
+	<-stop
+	log.Info("master server stopped")
+}
+
+// Serve sets up and runs the SSH server, handling a connection passed via a file descriptor for a child process.
+func (s *Server) Serve() {
+	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
+
+	server := setupServer()
+
+	// The file descriptor is 3 in the child process (0=stdin, 1=stdout, 2=stderr)
+	// Since we passed it via ExtraFiles in the parent
+	actualFd := 3
+
+	// Create a new file from the file descriptor
+	file := os.NewFile(uintptr(actualFd), config.App.Name()+"-connection")
+	if file == nil {
+		log.Fatal("failed to create file from descriptor")
+	}
+	defer file.Close()
+
+	// Convert the file back to a TCP connection
+	conn, err := net.FileConn(file)
+	if err != nil {
+		log.Fatalf("failed to create connection from file: %v", err)
+	}
+	defer conn.Close()
+	log.Infof("child serving connection from %s", conn.RemoteAddr())
+
+	ctx, cancel := ssh.NewContext(server)
+	ctx.SetValue(ssh.ContextKeyCancelFunc, cancel)
+
+	go server.HandleConnWithContext(conn, ctx)
+
+	<-ctx.Done()
+
+	// Create a context with a 5 second timeout
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cleanupCancel()
+	log.Debugf("shutting down devices...")
+	err = deviceRegistry.ShutdownAllDevices(cleanupCtx)
+	if err != nil {
+		log.Errorf("failed to shutdown devices: %v", err)
+	}
+
+	log.Info("child server stopped")
+}
+
+func handoffToChild(conn net.Conn) {
+	// Get the TCP connection's file descriptor
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		log.Errorf("failed to convert to TCPConn")
+		conn.Close()
+		return
+	}
+
+	// Get the underlying file
+	file, err := tcpConn.File()
+	if err != nil {
+		log.Errorf("failed to get file from connection: %v", err)
+		conn.Close()
+		return
+	}
+	defer file.Close()
+
+	// The parent doesn't need the connection anymore
+	conn.Close()
+
+	//execPath, err := os.Executable()
+	//if err != nil {
+	//	log.Println("Failed to get executable path:", err)
+	//	return
+	//}
+
+	//Start the child process, passing the file descriptor as an environment variable
+	//cmd := exec.Command(execPath, os.Args[1:]...)
+
+	cmd := exec.Command(os.Args[0], "serve", conn.RemoteAddr().String())
+	var env []string
+	for _, e := range env {
+		if strings.HasPrefix(e, config.SocketFdEnvName()+"=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd.Env = append(env,
+		config.SocketFdEnvString(file),
+		config.ArgsEnvString(),
+	)
+
+	// Set the file descriptor to be inherited by the child
+	cmd.ExtraFiles = []*os.File{file}
+
+	// Connect standard output and error
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Set process attributes to detach the child process
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		// Set detach flag (different per OS)
+		Setpgid: true, // On Unix/Linux
+		// For Windows, you would use:
+		// CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+		//Noctty: true,
+	}
+
+	//Start the process
+	if err := cmd.Start(); err != nil {
+		log.Errorf("failed to start child process: %v", err)
+		return
+	}
+
+	//We don't need to wait for the child at all, since it's detached
+	//Just let the process ID be collected by the OS
+	log.Infof("started detached child process with pid %d", cmd.Process.Pid)
+	//cmd.Process.Release()
+	// Wait allows avoid <defunct> processes
+	cmd.Process.Wait()
+
+	// Another approach
+
+	//cwd, _ := os.Getwd()
+	//var attr = os.ProcAttr{
+	//	Dir: cwd,
+	//	Env: append(os.Environ(), "SOCKET_FD="+strconv.Itoa(int(file.Fd()))),
+	//	Files: []*os.File{
+	//		os.Stdin,
+	//		os.Stdout,
+	//		os.Stderr,
+	//		file,
+	//	},
+	//	Sys: &syscall.SysProcAttr{
+	//		// Set detach flag (different per OS)
+	//		Setpgid: true, // On Unix/Linux
+	//		// For Windows, you would use:
+	//		// CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
+	//		//Noctty: true,
+	//	},
+	//}
+	//process, err := os.StartProcess(execPath, os.Args[1:], &attr)
+	//if err == nil {
+	//	// It is not clear from docs, but Realease actually detaches the process
+	//	err = process.Release()
+	//	if err != nil {
+	//		log.Error(err.Error())
+	//		return
+	//	}
+	//} else {
+	//	log.Error(err.Error())
+	//	return
+	//}
+	//
+	//log.Printf("Started detached child process with PID: %d", process.Pid)
+}
+
+func setupServer() *ssh.Server {
 	var authHandler ssh.PublicKeyHandler
 	if config.Noauth {
 		authHandler = noAuthHandler
@@ -68,7 +300,7 @@ func Run(c *Config) {
 	}
 
 	if !config.Noauth && len(config.AllowedGroups) > 0 {
-		config.AllowedGroups = append([]string{"0"}, getGroupIds(c.AllowedGroups)...)
+		config.AllowedGroups = append([]string{"0"}, getGroupIds(config.AllowedGroups)...)
 	}
 
 	var defaultSubsystemHandler ssh.SubsystemHandler = defaultSubsystemHandler
@@ -89,6 +321,8 @@ func Run(c *Config) {
 		}
 	}
 
+	forwardHandler := new(ForwardedTCPHandler)
+
 	server := &ssh.Server{
 		Addr:             config.Listen,
 		IdleTimeout:      config.IdleTimeout,
@@ -101,185 +335,40 @@ func Run(c *Config) {
 		},
 		ChannelHandlers: map[string]ssh.ChannelHandler{
 			"session":      ssh.DefaultSessionHandler,
-			"direct-tcpip": directTCPIPHandler,
+			"direct-tcpip": directTCPIPStdioHandler,
 		},
-		HostSigners: hostSigners,
+		RequestHandlers: map[string]ssh.RequestHandler{
+			"tcpip-forward":        forwardHandler.HandleSSHRequest,
+			"cancel-tcpip-forward": forwardHandler.HandleSSHRequest,
+		},
+		ReversePortForwardingCallback: reversePortForwardingCallback,
+		HostSigners:                   hostSigners,
 	}
 
 	if config.Banner {
 		server.BannerHandler = bannerHandler
 	}
-
-	// Set up a channel to listen for signals
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	err := cleanLeftoverProxyDevices()
-	if err != nil {
-		log.Errorf("clean leftover devices: %v", err)
-	}
-
-	// Start the server in a goroutine
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != ssh.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
-		}
-	}()
-
-	// Wait for a signal to gracefully shutdown
-	<-stop
-	log.Info("Shutting down server...")
-
-	// Create a context with a 5 second timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err = deviceRegistry.ShutdownAllDevices(ctx)
-	if err != nil {
-		log.Errorf("Failed to shutdown devices: %v", err)
-	}
-
-	// Perform graceful shutdown
-	if err = server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server shutdown failed: %v", err)
-	}
-
-	log.Info("Server gracefully stopped")
-
+	return server
 }
 
-func enableHealthCheck() {
+func (s *Server) enableHealthCheck() {
 	c := cron.New()
-	c.AddFunc(fmt.Sprintf("@every %s", config.HealthCheck), checkHealth)
+	_, err := c.AddFunc(
+		fmt.Sprintf("@every %s", config.HealthCheck),
+		func() {
+			s.checkHealth()
+		})
+	if err != nil {
+		log.Errorf("failed to add health check: %v", err)
+		return
+	}
 	c.Start()
 }
 
-func checkIncus() error {
-	server, err := NewIncusServer()
+func (s *Server) checkHealth() bool {
+	err := s.checkIncus()
 	if err != nil {
-		return fmt.Errorf("failed to initialize incus client: %w", err)
+		log.Errorf("health check failed: %v", err)
 	}
-
-	// Connect to Incus
-	err = server.Connect(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to connect to incus: %w", err)
-	}
-	defer server.Disconnect()
-
-	info := server.GetConnectionInfo()
-	config.IncusInfo = info
-	log.Debugln(info)
-
-	return nil
-}
-
-func NewIncusServer() (*incus.Server, error) {
-	params, err := getIncusServerParams()
-	if err != nil {
-		return nil, err
-	}
-	s := incus.NewServer()
-	s.SetConnectParams(params)
-	return s, nil
-}
-
-func getIncusServerParams() (*incus.ConnectParams, error) {
-	if connectParams != nil {
-		return connectParams, nil
-	}
-
-	clicfg, err := cliconfig.LoadConfig("")
-	if err != nil {
-		log.Debugf("Failed to load incus CLI config: %v", err)
-	}
-
-	var url string
-	var certFile, keyFile, serverCertFile string
-
-	// First priority: Check if Remote is set
-	if config.Remote != "" && clicfg != nil {
-		remote, ok := clicfg.Remotes[config.Remote]
-		if !ok {
-			return nil, fmt.Errorf("remote '%s' not found in incus configuration", config.Remote)
-		}
-		url = remote.Addr
-
-		// For HTTPS connections, determine client certificate paths
-		if strings.HasPrefix(url, "https://") {
-			// Check if custom paths are provided in our config
-			if config.ServerCert != "" {
-				serverCertFile = config.ServerCert
-			} else {
-				serverCertFile = clicfg.ConfigPath("servercerts", config.Remote+".crt")
-			}
-			if config.ClientCert != "" && config.ClientKey != "" {
-				certFile = config.ClientCert
-				keyFile = config.ClientKey
-			} else {
-				// Use default Incus client cert/key which are stored in the same directory as config.yml
-				certFile = clicfg.ConfigPath("client.crt")
-				keyFile = clicfg.ConfigPath("client.key")
-			}
-
-			// Ensure certificate files exist
-			if _, err := os.Stat(certFile); err != nil {
-				return nil, fmt.Errorf("client certificate not found at %s: %w", certFile, err)
-			}
-			if _, err := os.Stat(keyFile); err != nil {
-				return nil, fmt.Errorf("client key not found at %s: %w", keyFile, err)
-			}
-		}
-	} else if config.URL != "" {
-		// Second priority: Use URL if set
-		url = config.URL
-
-		// For HTTPS connections, we need to get cert/key from config or environment
-		if strings.HasPrefix(url, "https://") {
-			// First try config fields
-			if config.ServerCert != "" {
-				certFile = config.ServerCert
-			} else {
-				certFile = os.Getenv("INCUS_SERVER_CERT")
-			}
-			if config.ClientCert != "" && config.ClientKey != "" {
-				certFile = config.ClientCert
-				keyFile = config.ClientKey
-			} else {
-				// Otherwise try environment variables
-				certFile = os.Getenv("INCUS_CLIENT_CERT")
-				keyFile = os.Getenv("INCUS_CLIENT_KEY")
-			}
-
-			if certFile == "" || keyFile == "" {
-				return nil, fmt.Errorf("HTTPS connection requires client certificate and key")
-			}
-		}
-	} else if config.Socket != "" {
-		// Third priority: Use Socket if set
-		url = config.Socket
-	} else {
-		// Default: Let Incus client use default socket path
-		url = ""
-	}
-
-	connectParams = &incus.ConnectParams{
-		Url:            url,
-		CertFile:       certFile,
-		KeyFile:        keyFile,
-		ServerCertFile: serverCertFile,
-	}
-	return connectParams, nil
-}
-
-func checkHealth() {
-	err := checkIncus()
-	if err != nil {
-		log.Errorf("Health check failed: %v", err)
-	}
-}
-
-func defaultSubsystemHandler(s ssh.Session) {
-	s.Write([]byte(fmt.Sprintf("%s subsytem not implemented\n", s.Subsystem())))
-	s.Exit(ExitCodeNotImplemented)
+	return err == nil
 }

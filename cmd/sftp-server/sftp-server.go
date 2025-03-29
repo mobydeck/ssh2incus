@@ -51,15 +51,6 @@ func main() {
 		exit(errors.New("HOME environment variable not set"))
 	}
 
-	toInt := func(s string, ok bool) (int, error) {
-		i, err := strconv.Atoi(s)
-		if err != nil {
-			return 0, err
-		}
-
-		return i, nil
-	}
-
 	gid, err := toInt(os.LookupEnv("GID"))
 	if err != nil {
 		exit(errors.New("GID environment variable not set"))
@@ -115,4 +106,13 @@ func exit(err error) {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func toInt(s string, ok bool) (int, error) {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, err
+	}
+
+	return i, nil
 }

@@ -10,12 +10,29 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
+	"ssh2incus/pkg/cache"
+	"ssh2incus/pkg/queue"
 	"ssh2incus/pkg/util/structs"
 
 	"github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/shared/api"
 )
+
+var (
+	instanceStateCache *cache.Cache
+	instanceStateQueue *queue.Queueable[*api.InstanceState]
+	instanceStateOnce  sync.Once
+)
+
+func init() {
+	instanceStateOnce.Do(func() {
+		instanceStateCache = cache.New(1*time.Minute, 2*time.Minute)
+		instanceStateQueue = queue.New[*api.InstanceState](100)
+	})
+}
 
 type ConnectParams struct {
 	Url            string
@@ -25,22 +42,24 @@ type ConnectParams struct {
 	CaCertFile     string
 }
 
-type Server struct {
+type Client struct {
 	srv    incus.InstanceServer
 	params *ConnectParams
 }
 
-func NewServer() *Server {
-	return &Server{}
+func NewClient() *Client {
+	return new(Client)
 }
 
-func (s *Server) SetConnectParams(p *ConnectParams) {
-	s.params = p
+func NewClientWithParams(p *ConnectParams) *Client {
+	c := new(Client)
+	c.params = p
+	return c
 }
 
-func (s *Server) Connect(ctx context.Context) error {
+func (c *Client) Connect(ctx context.Context) error {
 	var err error
-	params := *s.params
+	params := *c.params
 	// Check if the URL is an HTTPS URL
 	if strings.HasPrefix(params.Url, "https://") {
 		// HTTPS connection requires client certificates
@@ -96,38 +115,65 @@ func (s *Server) Connect(ctx context.Context) error {
 			TLSClientKey:  string(keyPEM),
 			TLSServerCert: string(serverCertPEM),
 		}
-		s.srv, err = incus.ConnectIncusWithContext(ctx, params.Url, args)
+		c.srv, err = incus.ConnectIncusWithContext(ctx, params.Url, args)
 		return err
 	} else {
 		// If not HTTPS, treat as Unix socket path
-		s.srv, err = incus.ConnectIncusUnixWithContext(ctx, params.Url, nil)
+		c.srv, err = incus.ConnectIncusUnixWithContext(ctx, params.Url, nil)
 		return err
 	}
 }
 
-func (s *Server) UseProject(project string) error {
-	_, _, err := s.srv.GetProject(project)
+func (c *Client) UseProject(project string) error {
+	_, _, err := c.srv.GetProject(project)
 	if err != nil {
 		return err
 	}
-	s.srv = s.srv.UseProject(project)
+	c.srv = c.srv.UseProject(project)
 	return nil
 }
 
-func (s *Server) GetInstance(name string) (*api.Instance, string, error) {
-	return s.srv.GetInstance(name)
+func (c *Client) GetInstance(project, name string) (*api.Instance, string, error) {
+	err := c.UseProject(project)
+	if err != nil {
+		return nil, "", err
+	}
+	return c.srv.GetInstance(name)
 }
 
-func (s *Server) GetInstanceState(name string) (*api.InstanceState, string, error) {
-	return s.srv.GetInstanceState(name)
+func (c *Client) GetCachedInstanceState(project, instance string) (*api.InstanceState, error) {
+	cacheName := fmt.Sprintf("%s/%s", project, instance)
+	if state, ok := instanceStateCache.Get(cacheName); ok {
+		return state.(*api.InstanceState), nil
+	}
+	err := c.UseProject(project)
+	if err != nil {
+		return nil, err
+	}
+	state, err := queue.EnqueueWithParam(instanceStateQueue, func(i string) (*api.InstanceState, error) {
+		s, _, err := c.srv.GetInstanceState(instance)
+		return s, err
+	}, instance)
+	if err == nil {
+		instanceStateCache.SetDefault(cacheName, state)
+	}
+	return state, err
 }
 
-func (s *Server) UpdateInstance(name string, instance api.InstancePut, ETag string) (incus.Operation, error) {
-	return s.srv.UpdateInstance(name, instance, ETag)
+func (c *Client) UpdateInstance(name string, instance api.InstancePut, ETag string) (incus.Operation, error) {
+	return c.srv.UpdateInstance(name, instance, ETag)
 }
 
-func (s *Server) GetInstancesAllProjects(t api.InstanceType) (instances []api.Instance, err error) {
-	return s.srv.GetInstancesAllProjects(t)
+func (c *Client) GetInstancesAllProjects(t api.InstanceType) (instances []api.Instance, err error) {
+	return c.srv.GetInstancesAllProjects(t)
+}
+
+func (c *Client) GetInstanceNetworks(project, instance string) (map[string]api.InstanceStateNetwork, error) {
+	state, err := c.GetCachedInstanceState(project, instance)
+	if err != nil {
+		return nil, err
+	}
+	return state.Network, nil
 }
 
 func IsDefaultProject(project string) bool {
@@ -137,11 +183,11 @@ func IsDefaultProject(project string) bool {
 	return false
 }
 
-func (s *Server) GetConnectionInfo() map[string]interface{} {
-	info, _ := s.srv.GetConnectionInfo()
+func (c *Client) GetConnectionInfo() map[string]interface{} {
+	info, _ := c.srv.GetConnectionInfo()
 	return structs.Map(info)
 }
 
-func (s *Server) Disconnect() {
-	s.srv.Disconnect()
+func (c *Client) Disconnect() {
+	c.srv.Disconnect()
 }

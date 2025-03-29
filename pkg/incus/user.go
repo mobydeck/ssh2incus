@@ -1,27 +1,34 @@
 package incus
 
 import (
+	"errors"
 	"fmt"
-	"ssh2incus/pkg/util/cache"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"ssh2incus/pkg/cache"
+	"ssh2incus/pkg/queue"
 	"ssh2incus/pkg/util/buffer"
-
-	log "github.com/sirupsen/logrus"
 )
 
 var (
 	instanceUserCache *cache.Cache
+	instanceUserQueue *queue.Queueable[*InstanceUser]
+	instanceUserOnce  sync.Once
 )
 
 func init() {
-	instanceUserCache = cache.New(20*time.Minute, 30*time.Minute)
+	instanceUserOnce.Do(func() {
+		instanceUserCache = cache.New(20*time.Minute, 30*time.Minute)
+		instanceUserQueue = queue.New[*InstanceUser](100)
+	})
 }
 
 type InstanceUser struct {
 	Instance string
+	Project  string
 	User     string
 	Uid      int
 	Gid      int
@@ -30,27 +37,46 @@ type InstanceUser struct {
 	Ent      string
 }
 
-func (s *Server) GetInstanceUser(project, instance, user string) *InstanceUser {
+func (i *InstanceUser) Welcome() string {
+	return fmt.Sprintf("Welcome %q to incus shell on %s", i.User, i.FullInstance())
+}
+
+func (i *InstanceUser) FullInstance() string {
+	return fmt.Sprintf("%s.%s", i.Instance, i.Project)
+}
+
+func (c *Client) GetInstanceUser(project, instance, user string) (*InstanceUser, error) {
 	cacheKey := instanceUserKey(project, instance, user)
 	if iu, ok := instanceUserCache.Get(cacheKey); ok {
-		return iu.(*InstanceUser)
+		return iu.(*InstanceUser), nil
 	}
 
 	cmd := fmt.Sprintf("getent passwd %s", user)
-	stdout := buffer.NewOutputBuffer()
-	stderr := buffer.NewOutputBuffer()
+	iu, err := queue.EnqueueWithParam(instanceUserQueue, func(i string) (*InstanceUser, error) {
+		stdout := buffer.NewOutputBuffer()
+		stderr := buffer.NewOutputBuffer()
 
-	ie := s.NewInstanceExec(InstanceExec{
-		Instance: instance,
-		Cmd:      cmd,
-		Stdout:   stdout,
-		Stderr:   stderr,
-	})
+		ie := c.NewInstanceExec(InstanceExec{
+			Instance: instance,
+			Cmd:      cmd,
+			Stdout:   stdout,
+			Stderr:   stderr,
+		})
 
-	ret, _ := ie.Exec()
+		ret, err := ie.Exec()
+		if err != nil {
+			return nil, err
+		}
+		if ret != 0 {
+			return nil, errors.New("user not found")
+		}
 
-	if ret == 0 && len(stdout.Lines()) > 0 {
-		ent := strings.Split(stdout.Lines()[0], ":")
+		out := stdout.Lines()
+
+		if len(out) < 1 {
+			return nil, errors.New("user not found")
+		}
+		ent := strings.Split(out[0], ":")
 		user = ent[0]
 		uid, _ := strconv.Atoi(ent[2])
 		gid, _ := strconv.Atoi(ent[3])
@@ -58,22 +84,22 @@ func (s *Server) GetInstanceUser(project, instance, user string) *InstanceUser {
 		shell := ent[6]
 		iu := &InstanceUser{
 			Instance: instance,
+			Project:  project,
 			User:     user,
 			Uid:      uid,
 			Gid:      gid,
 			Dir:      dir,
 			Shell:    shell,
-			Ent:      stdout.Lines()[0],
+			Ent:      out[0],
 		}
+		return iu, nil
+	}, instance)
 
+	if err == nil {
 		instanceUserCache.SetDefault(cacheKey, iu)
-
-		return iu
 	}
 
-	log.Debugf("couldn't find user %s or instance %s", user, instance)
-
-	return nil
+	return iu, err
 }
 
 func instanceUserKey(project, instance, user string) string {

@@ -55,6 +55,8 @@ var (
 	// ContextKeyPublicKey is a context key for use with Contexts in this package.
 	// The associated value will be of type PublicKey.
 	ContextKeyPublicKey = &contextKey{"public-key"}
+
+	ContextKeyCancelFunc = &contextKey{"cancel-func"}
 )
 
 // Context is a package specific context interface. It exposes connection
@@ -99,7 +101,7 @@ type sshContext struct {
 	valuesMu sync.Mutex
 }
 
-func newContext(srv *Server) (*sshContext, context.CancelFunc) {
+func NewContext(srv *Server) (*sshContext, context.CancelFunc) {
 	innerCtx, cancel := context.WithCancel(context.Background())
 	ctx := &sshContext{Context: innerCtx, Mutex: &sync.Mutex{}, values: make(map[interface{}]interface{})}
 	ctx.SetValue(ContextKeyServer, srv)

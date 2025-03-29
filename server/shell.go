@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -14,8 +16,9 @@ import (
 	"unsafe"
 
 	"ssh2incus/pkg/incus"
-	"ssh2incus/pkg/util/shlex"
-	"ssh2incus/pkg/util/ssh"
+	"ssh2incus/pkg/shlex"
+	"ssh2incus/pkg/ssh"
+	"ssh2incus/pkg/util"
 
 	"github.com/creack/pty"
 	log "github.com/sirupsen/logrus"
@@ -30,6 +33,12 @@ const (
 	ExitCodeArchitectureError = 4
 	ExitCodeInternalError     = 20
 	ExitCodeConnectionError   = 255
+)
+
+const (
+	ShellSu    = "su"
+	ShellSush  = "sush"
+	ShellLogin = "login"
 )
 
 // setupEnvironmentVariables creates and populates the environment map
@@ -67,10 +76,12 @@ func buildCommandString(s ssh.Session, iu *incus.InstanceUser, remoteAddr string
 	if s.RawCommand() == "" {
 		switch config.Shell {
 		case ShellSu:
-			cmd = fmt.Sprintf(`su - "%s"`, iu.User)
+			cmd = fmt.Sprintf("su - %q", iu.User)
+		case ShellSush:
+			cmd = fmt.Sprintf("sush %q", iu.User)
 		case ShellLogin:
 			host := strings.Split(remoteAddr, ":")[0]
-			cmd = fmt.Sprintf(`login -h "%s" -f "%s"`, host, iu.User)
+			cmd = fmt.Sprintf("login -h %q -f %q", host, iu.User)
 		default:
 			shouldRunAsUser = true
 			cmd = fmt.Sprintf("%s -l", iu.Shell)
@@ -78,8 +89,8 @@ func buildCommandString(s ssh.Session, iu *incus.InstanceUser, remoteAddr string
 	} else {
 		shouldRunAsUser = true
 		cmd = s.RawCommand()
-		if strings.Contains(cmd, "$") {
-			cmd = fmt.Sprintf(`%s -c "%s"`, iu.Shell, cmd)
+		if needsShellWrapping(cmd) {
+			cmd = fmt.Sprintf("%s -c %q", iu.Shell, cmd)
 		}
 	}
 
@@ -87,40 +98,33 @@ func buildCommandString(s ssh.Session, iu *incus.InstanceUser, remoteAddr string
 }
 
 func shellHandler(s ssh.Session) {
-	lu, ok := s.Context().Value("LoginUser").(LoginUser)
+	lu, ok := s.Context().Value(ContextKeyLoginUser).(*LoginUser)
 	if !ok || !lu.IsValid() {
-		log.Errorf("invalid connection data for %#v", lu)
-		io.WriteString(s, "invalid connection data")
+		log.Errorf("invalid login for %s", lu)
+		io.WriteString(s, fmt.Sprintf("Invalid login for %q (%s)\n", lu.OrigUser, lu))
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
-	log.Debugf("shell: connecting %#v", lu)
+	log.Debugf("shell: connecting %s", lu)
 
 	if lu.User == "root" && lu.Instance == "%shell" {
 		incusShell(s)
 		return
 	}
 
-	server, err := NewIncusServer()
+	client, err := NewIncusClientWithContext(context.Background(), DefaultParams)
 	if err != nil {
-		log.Errorf("failed to initialize incus client: %v", err)
+		log.Error(err)
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
-
-	err = server.Connect(s.Context())
-	if err != nil {
-		log.Errorf("failed to connect to incus: %v", err)
-		s.Exit(ExitCodeConnectionError)
-		return
-	}
-	defer server.Disconnect()
+	defer client.Disconnect()
 
 	// Project handling
 	if !lu.IsDefaultProject() {
-		err = server.UseProject(lu.Project)
+		err = client.UseProject(lu.Project)
 		if err != nil {
-			log.Errorf("using project %s error: %v", lu.Project, err)
+			log.Errorf("error using project %s: %v", lu.Project, err)
 			io.WriteString(s, fmt.Sprintf("unknown project %s\n", lu.Project))
 			s.Exit(ExitCodeInvalidProject)
 			return
@@ -130,46 +134,55 @@ func shellHandler(s ssh.Session) {
 	// User handling
 	var iu *incus.InstanceUser
 	if lu.InstanceUser != "" {
-		iu = server.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+		iu, err = client.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+		if err != nil {
+			log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
+			io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
+			s.Exit(ExitCodeInvalidLogin)
+			return
+		}
 	}
 
 	if iu == nil {
-		io.WriteString(s, "not found user or instance\n")
-		log.Errorf("shell: not found instance user for %#v", lu)
+		io.WriteString(s, fmt.Sprintf("not found user or instance for %q\n", lu))
+		log.Errorf("shell: not found instance user for %s", lu)
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
 
 	// Get PTY information
 	ptyReq, winCh, isPty := s.Pty()
+	isRaw := s.RawCommand() != ""
 
 	// Setup environment
 	env := setupEnvironmentVariables(s, iu, ptyReq)
 
 	// Setup SSH agent if requested
 	if ssh.AgentRequested(s) {
-		l, err := ssh.NewAgentListener()
+		al, err := ssh.NewAgentListener()
 		if err != nil {
 			log.Errorf("Failed to create agent listener: %v", err)
 			return
 		}
 
-		defer l.Close()
-		go ssh.ForwardAgentConnections(l, s)
+		defer al.Close()
+		go ssh.ForwardAgentConnections(al, s)
 
-		d := server.NewProxyDevice(incus.ProxyDevice{
+		pd := client.NewProxyDevice(incus.ProxyDevice{
 			Project:  lu.Project,
 			Instance: lu.Instance,
-			Source:   l.Addr().String(),
+			Source:   al.Addr().String(),
 			Uid:      iu.Uid,
 			Gid:      iu.Gid,
 			Mode:     "0660",
 		})
 
-		if socket, err := d.AddSocket(); err == nil {
+		if socket, err := pd.AddSocket(); err == nil {
 			env["SSH_AUTH_SOCK"] = socket
-			deviceRegistry.AddDevice(d)
-			defer d.RemoveSocket()
+			deviceRegistry.AddDevice(pd)
+			defer func() {
+				go pd.Shutdown()
+			}()
 		} else {
 			log.Errorf("Failed to add socket: %v", err)
 		}
@@ -178,9 +191,14 @@ func shellHandler(s ssh.Session) {
 	// Build command string
 	cmd, shouldRunAsUser := buildCommandString(s, iu, s.RemoteAddr().String())
 
-	log.Debugf("shell cmd: %v", cmd)
+	log.Debugf("shell cmd: %s", cmd)
 	log.Debugf("shell pty: %v", isPty)
-	log.Debugf("shell env: %v", env)
+	log.Debugf("shell env: %s", util.MapToEnvString(env))
+
+	if config.Welcome && isPty && !isRaw {
+		s.Write(
+			[]byte(fmt.Sprintf("%s\n\n", iu.Welcome())))
+	}
 
 	// Setup I/O pipes
 	stdin, stderr := setupShellPipesWithCleanup(s)
@@ -204,7 +222,7 @@ func shellHandler(s ssh.Session) {
 		uid, gid = iu.Uid, iu.Gid
 	}
 
-	ie := server.NewInstanceExec(incus.InstanceExec{
+	ie := client.NewInstanceExec(incus.InstanceExec{
 		Instance: lu.Instance,
 		Cmd:      cmd,
 		Env:      env,
@@ -225,8 +243,8 @@ func shellHandler(s ssh.Session) {
 	}
 
 	err = s.Exit(ret)
-	if err != nil {
-		log.Errorf("ssh session exit failed: %v", err)
+	if err != nil && err != io.EOF {
+		log.Errorf("failed to exit ssh session: %v", err)
 	}
 }
 
@@ -260,8 +278,8 @@ Type incus command:
 
 	p, err := pty.Start(cmd)
 	if err != nil {
-		log.Errorln(err.Error())
-		io.WriteString(s, "Couldn't allocate PTY\n")
+		log.Errorf("incus shell: %v", err)
+		io.WriteString(s, "Could not allocate PTY\n")
 		s.Exit(-1)
 	}
 	defer p.Close()
@@ -281,6 +299,44 @@ Hit Enter or type 'help' for help
 	}()
 	io.Copy(s, p) // stdout
 	cmd.Wait()
+}
+
+func needsShellWrapping(cmd string) bool {
+	// Empty string doesn't need wrapping
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+
+	// Match common shell constructs
+	shellPatterns := []*regexp.Regexp{
+		regexp.MustCompile(`[|&;()<>\s]`),                     // Shell metacharacters
+		regexp.MustCompile(`[*?[\]{}~]`),                      // Glob characters
+		regexp.MustCompile(`\$(?:\w+|{.+?}|\(.+?\)|\(.+?\))`), // Variable references and substitutions
+		regexp.MustCompile("`[^`]+`"),                         // Backtick command substitution
+		regexp.MustCompile(`\b(?:if|for|while|until|case|function|source|alias|export|set|unset)\b`), // Shell keywords
+	}
+
+	for _, pattern := range shellPatterns {
+		if pattern.MatchString(cmd) {
+			return true
+		}
+	}
+
+	// Check for redirect operators
+	redirectOps := []string{" > ", " >> ", " < ", " << ", " 2> ", " 2>> "}
+	for _, op := range redirectOps {
+		if strings.Contains(cmd, op) {
+			return true
+		}
+	}
+
+	// Check for multiple commands
+	if strings.Contains(cmd, " && ") || strings.Contains(cmd, " || ") || strings.Contains(cmd, " ; ") {
+		return true
+	}
+
+	return false
 }
 
 // Helper function to setup stdin/stdout/stderr pipes
@@ -489,7 +545,7 @@ func setupShellPipesWithCleanup(s ssh.Session) (io.ReadCloser, io.WriteCloser) {
 
 			nr, err := errRead.Read(buf)
 			if err != nil {
-				if err != io.EOF {
+				if err != io.EOF && !isClosedPipe(err) {
 					log.Debugf("stderr read error: %v", err)
 				}
 				return
@@ -531,6 +587,14 @@ func isTimeout(err error) bool {
 	}
 	netErr, ok := err.(net.Error)
 	return ok && netErr.Timeout()
+}
+
+// Helper function to check if an error is a timeout
+func isClosedPipe(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, io.ErrClosedPipe)
 }
 
 // Wrapper types that ensure cleanup happens on Close()

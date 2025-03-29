@@ -2,46 +2,37 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 
 	"ssh2incus/pkg/incus"
+	"ssh2incus/pkg/ssh"
 	"ssh2incus/pkg/util"
-	"ssh2incus/pkg/util/ssh"
+	"ssh2incus/server/sftp-server-binary"
 
 	log "github.com/sirupsen/logrus"
 )
 
 func sftpSubsystemHandler(s ssh.Session) {
-	lu, ok := s.Context().Value("LoginUser").(LoginUser)
+	lu, ok := s.Context().Value(ContextKeyLoginUser).(*LoginUser)
 	if !ok || !lu.IsValid() {
-		log.Errorf("invalid connection data for %#v", lu)
-		io.WriteString(s, "invalid connection data")
+		log.Errorf("invalid login for %s", lu)
+		io.WriteString(s, fmt.Sprintf("Invalid login for %q (%s)\n", lu.OrigUser, lu))
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
-	log.Debugf("sftp: connecting %#v", lu)
+	log.Debugf("sftp: connecting %s", lu)
 
-	server, err := NewIncusServer()
+	client, err := NewIncusClientWithContext(s.Context(), DefaultParams)
 	if err != nil {
-		log.Errorf("failed to initialize incus client: %v", err)
-		io.WriteString(s, "invalid connection data")
-		s.Exit(ExitCodeInvalidLogin)
-		return
-	}
-
-	// subsystem needs own context
-	err = server.Connect(context.Background())
-	if err != nil {
-		log.Errorf("failed to connect to incus: %v", err)
+		log.Error(err)
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
-	defer server.Disconnect()
+	defer client.Disconnect()
 
 	if !lu.IsDefaultProject() {
-		err = server.UseProject(lu.Project)
+		err = client.UseProject(lu.Project)
 		if err != nil {
 			log.Errorf("using project %s error: %v", lu.Project, err)
 			io.WriteString(s, fmt.Sprintf("unknown project %s\n", lu.Project))
@@ -50,25 +41,20 @@ func sftpSubsystemHandler(s ssh.Session) {
 		}
 	}
 
-	meta, _, err := server.GetInstanceMeta(lu.Instance)
+	instance, err := client.GetCachedInstance(lu.Project, lu.Instance)
 	if err != nil {
-		log.Errorf("cannot get instance meta: %s", err)
-		io.WriteString(s, fmt.Sprintf("cannot get instance meta\n"))
+		log.Errorf("cannot get instance for %s: %s", lu, err)
+		io.WriteString(s, fmt.Sprintf("cannot get instance %s\n", lu.FullInstance()))
 		s.Exit(ExitCodeMetaError)
 		return
 	}
-	log.Debugf("sftp: instance meta: %#v", meta)
+	//log.Debugf("sftp: instance: %#v", instance)
 
-	var sftpServerBinBytes []byte
-	switch meta.Architecture {
-	case "arm64", "aarch64":
-		sftpServerBinBytes = sftpServerArm64Bytes
-	case "amd64", "x86_64", "x64", "x86-64", "x86":
-		sftpServerBinBytes = sftpServerAmd64Bytes
-	default:
-		log.Errorf("unsupported architecture: %s", meta.Architecture)
-		io.WriteString(s, fmt.Sprintf("unsupported architecture: %s\n", meta.Architecture))
-		s.Exit(ExitCodeArchitectureError)
+	sftpServerBinBytes, err := sftp_server_binary.BinBytes(instance.Architecture)
+	if err != nil {
+		log.Errorf("failed to get sftp-server binary: %s", err)
+		io.WriteString(s, fmt.Sprintf("failed to get sftp-server binary\n"))
+		s.Exit(ExitCodeInternalError)
 		return
 	}
 	sftpServerBinBytes, err = util.Ungz(sftpServerBinBytes)
@@ -76,51 +62,50 @@ func sftpSubsystemHandler(s ssh.Session) {
 		log.Errorf("failed to ungzip sftp-server: %s", err)
 		io.WriteString(s, fmt.Sprintf("failed to prepare sftp-server\n"))
 		s.Exit(ExitCodeInternalError)
+		return
 	}
 
-	if !server.FileExists(lu.Project, lu.Instance, sftpServerBinName, util.Md5Bytes(sftpServerBinBytes), true) {
-		err = server.UploadBytes(lu.Project, lu.Instance, sftpServerBinName, bytes.NewReader(sftpServerBinBytes), 0, 0, 0755)
+	existsParams := &incus.FileExistsParams{
+		Project:     lu.Project,
+		Instance:    lu.Instance,
+		Path:        sftp_server_binary.BinName(),
+		Md5sum:      util.Md5Bytes(sftpServerBinBytes),
+		ShouldCache: true,
+	}
+	if !client.FileExists(existsParams) {
+		err = client.UploadBytes(lu.Project, lu.Instance, sftp_server_binary.BinName(), bytes.NewReader(sftpServerBinBytes), 0, 0, 0755)
 		if err != nil {
 			log.Errorf("upload failed: %v", err)
-			io.WriteString(s, fmt.Sprintf("sftp-server is not available on %s.%s\n", lu.Instance, lu.Project))
+			io.WriteString(s, fmt.Sprintf("sftp-server is not available on %s\n", lu.FullInstance()))
 			s.Exit(ExitCodeConnectionError)
 			return
 		}
-		log.Debugf("sftp: uploaded %s to %s.%s", sftpServerBinName, lu.Instance, lu.Project)
+		log.Debugf("sftp-server: uploaded %s to %s", sftp_server_binary.BinName(), lu.FullInstance())
 	}
 	sftpServerBinBytes = nil
 
 	var iu *incus.InstanceUser
 	if lu.InstanceUser != "" {
-		iu = server.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+		iu, err = client.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+		if err != nil {
+			log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
+			io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
+			s.Exit(ExitCodeMetaError)
+			return
+		}
 	}
 
 	if iu == nil {
 		io.WriteString(s, "not found user or instance\n")
-		log.Errorf("sftp: not found instance user for %#v", lu)
+		log.Errorf("sftp: not found instance user for %s", lu)
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
 
-	log.Debugf("sftp: found instance user %s [%d %d]", iu.User, iu.Uid, iu.Gid)
+	//log.Debugf("sftp: found instance user %s [%d %d]", iu.User, iu.Uid, iu.Gid)
 
-	stdin, inWrite := io.Pipe()
-	errRead, stderr := io.Pipe()
-	defer func() {
-		stdin.Close()
-		stderr.Close()
-		errRead.Close()
-	}()
-
-	go func(s ssh.Session, w io.WriteCloser) {
-		defer w.Close()
-		io.Copy(w, s)
-	}(s, inWrite)
-
-	go func(s ssh.Session, e io.ReadCloser) {
-		defer e.Close()
-		io.Copy(s.Stderr(), e)
-	}(s, errRead)
+	stdin, stderr, cleanup := util.SetupPipes(s)
+	defer cleanup()
 
 	chroot := "/"
 	home := iu.Dir
@@ -130,7 +115,8 @@ func sftpSubsystemHandler(s ssh.Session) {
 		chroot = iu.Dir
 		home = "/"
 	}
-	cmd := fmt.Sprintf("%s -e -d %s", sftpServerBinName, chroot)
+
+	cmd := fmt.Sprintf("%s -e -d %s", sftp_server_binary.BinName(), chroot)
 
 	env := make(map[string]string)
 	env["USER"] = iu.User
@@ -141,7 +127,7 @@ func sftpSubsystemHandler(s ssh.Session) {
 	log.Debugf("sftp cmd: %v", cmd)
 	log.Debugf("sftp env: %v", env)
 
-	ie := server.NewInstanceExec(incus.InstanceExec{
+	ie := client.NewInstanceExec(incus.InstanceExec{
 		Instance: lu.Instance,
 		Cmd:      cmd,
 		Env:      env,

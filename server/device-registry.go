@@ -17,31 +17,25 @@ func init() {
 }
 
 func cleanLeftoverProxyDevices() error {
-	server, err := NewIncusServer()
+	client, err := NewIncusClientWithContext(context.Background(), DefaultParams)
 	if err != nil {
-		return fmt.Errorf("failed to initialize incus client: %w", err)
+		return err
 	}
+	defer client.Disconnect()
 
-	// Connect to Incus
-	err = server.Connect(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to connect to incus: %w", err)
-	}
-	defer server.Disconnect()
-
-	allInstances, err := server.GetInstancesAllProjects(api.InstanceTypeAny)
+	allInstances, err := client.GetInstancesAllProjects(api.InstanceTypeAny)
 	if err != nil {
 		return fmt.Errorf("failed to get instances: %w", err)
 	}
 	for _, i := range allInstances {
-		err = server.UseProject(i.Project)
+		err = client.UseProject(i.Project)
 		if err != nil {
 			log.Errorf("use project %s: %v", i.Project, err)
 			return err
 		}
 
 		for device, _ := range i.Devices {
-			err = server.DeleteInstanceDevice(&i, device)
+			err = client.DeleteInstanceDevice(&i, device)
 			if err != nil {
 				log.Errorf("delete instance %s.%s device %s: %v", i.Name, i.Project, device, err)
 				continue

@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 
-	"ssh2incus/pkg/util/ssh"
+	"ssh2incus/pkg/ssh"
 )
 
 func ExampleListenAndServe() {

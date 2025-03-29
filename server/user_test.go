@@ -47,7 +47,7 @@ func TestParseUser(t *testing.T) {
 
 	for us, lu := range cases {
 		t.Run(us, func(t *testing.T) {
-			u := parseUser(us)
+			u := parseLoginUser(us)
 			assert.Equal(t, lu.Instance, u.Instance)
 			assert.Equal(t, u.InstanceUser, u.InstanceUser)
 			assert.Equal(t, u.Project, u.Project)
