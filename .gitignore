@@ -11,5 +11,12 @@ server/stdio-proxy-binary/bin/
 /ansible
 Makefile
 cmd/helper
+cmd/nutshell
+/handoff
+/shell
 /docker*
 /scripts
+/nutshell
+/toybox
+
+.envrc
