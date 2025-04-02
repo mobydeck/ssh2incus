@@ -42,13 +42,13 @@ Download the latest package from the [Releases](https://github.com/mobydeck/ssh2
 
 ### Debian-based Systems (Ubuntu, Debian)
 
-```
+```shell
 apt-get install -f ./ssh2incus_0.1.0-0_amd64.deb
 ```
 
 ### RPM-based Systems (RHEL, Fedora, CentOS, AlmaLinux, Rocky Linux)
 
-```
+```shell
 yum install ./ssh2incus-0.1.0-0.x86_64.rpm
 ```
 
@@ -56,14 +56,14 @@ yum install ./ssh2incus-0.1.0-0.x86_64.rpm
 
 Start and enable the service:
 
-```
+```shell
 systemctl enable ssh2incus.service
 systemctl start ssh2incus.service
 ```
 
 Monitor logs:
 
-```
+```shell
 journalctl -f -u ssh2incus.service
 ```
 
@@ -73,7 +73,7 @@ journalctl -f -u ssh2incus.service
 
 To establish an SSH connection to an instance running on Incus host, run:
 
-```
+```shell
 ssh -p 2222 [instance-user@]instance-name[.project-name][+host-user]@incus-host
 ```
 
@@ -91,7 +91,7 @@ Where:
 
 Connect to instance `ubuntu` as `root`:
 
-```
+```shell
 ssh -p 2222 ubuntu@1.2.3.4
 ```
 
@@ -99,7 +99,7 @@ ssh -p 2222 ubuntu@1.2.3.4
 
 Connect to instance `ubuntu` as root using `admin` on the host:
 
-```
+```shell
 ssh -p 2222 ubuntu+admin@1.2.3.4
 ```
 
@@ -107,7 +107,7 @@ ssh -p 2222 ubuntu+admin@1.2.3.4
 
 Connect to instance `ubuntu` as user `ubuntu` using host user `admin`:
 
-```
+```shell
 ssh -p 2222 ubuntu@ubuntu+admin@1.2.3.4
 ```
 
@@ -115,7 +115,7 @@ ssh -p 2222 ubuntu@ubuntu+admin@1.2.3.4
 
 Connect to instance `ubuntu` in `project1` as user `ubuntu`:
 
-```
+```shell
 ssh -p 2222 ubuntu@ubuntu.project1@1.2.3.4
 ```
 
@@ -126,11 +126,11 @@ ssh -p 2222 ubuntu@ubuntu.project1@1.2.3.4
 Enable SSH agent forwarding to use your local SSH keys inside the instance:
 
 1. Start SSH agent locally:
-    ```
+    ```shell
     eval `ssh-agent`
     ```
 2. Connect with agent forwarding:
-    ```
+    ```shell
     ssh -A -p 2222 ubuntu@1.2.3.4
     ```
 
@@ -144,7 +144,7 @@ Forward local port 8080 to port 80 on the instance:
 
 To forward local port `8080` listening on `127.0.0.1` to port `80` on `ubuntu` instance, run:
 
-```
+```shell
 ssh -L 127.0.0.1:8080::80 -p 2222 ubuntu@1.2.3.4
 ```
 
@@ -152,7 +152,7 @@ ssh -L 127.0.0.1:8080::80 -p 2222 ubuntu@1.2.3.4
 
 Forward remote port 3000 on the instance to local port 8080 on your machine:
 
-```
+```shell
 ssh -R 127.0.0.1:3000:127.0.0.1:8080 -p 2222 ubuntu@1.2.3.4
 ```
 
@@ -161,7 +161,7 @@ ssh -R 127.0.0.1:3000:127.0.0.1:8080 -p 2222 ubuntu@1.2.3.4
 Dynamic port forwarding sets up a SOCKS5 proxy server through your SSH connection, allowing applications to route
 traffic through it regardless of destination port:
 
-```
+```shell
 ssh -D 1080 -p 2222 ubuntu@1.2.3.4
 ```
 
@@ -183,7 +183,7 @@ Host incus-host
 
 Now connect to the `ubuntu` instance as `root` with:
 
-```
+```shell
 ssh ubuntu@incus1
 ```
 
@@ -263,7 +263,7 @@ instance-d ansible_user=u1@ubuntu ansible_host=incus1 become=yes
 
 ### Example Playbook
 
-```
+```yaml
 ---
 - hosts: incus1,incus2
   become: no
@@ -285,7 +285,7 @@ By default, `ssh2incus`:
 
 To grant a user access permission:
 
-```
+```shell
 sudo usermod -aG incus your-host-user
 ```
 
@@ -352,7 +352,7 @@ Since `ssh2incus` listens on port `2222` by default, you'll need to configure yo
 
 ### Ubuntu/Debian (UFW)
 
-```
+```shell
 # Allow SSH access on port 2222
 sudo ufw allow 2222/tcp
 
@@ -365,7 +365,7 @@ sudo ufw status
 
 ### RHEL/CentOS/AlmaLinux/Rocky Linux (firewalld)
 
-```
+```shell
 # Allow SSH access on port 2222
 sudo firewall-cmd --permanent --add-port=2222/tcp
 
@@ -380,14 +380,14 @@ sudo firewall-cmd --list-ports
 
 #### iptables (direct)
 
-```
+```shell
 sudo iptables -A INPUT -p tcp --dport 2222 -j ACCEPT
 sudo iptables-save > /etc/iptables/rules.v4  # Make changes persistent
 ```
 
 #### nftables
 
-```
+```shell
 sudo nft add rule inet filter input tcp dport 2222 accept
 sudo nft list ruleset > /etc/nftables.conf  # Make changes persistent
 ```
@@ -423,4 +423,3 @@ If you encounter issues with `ssh2incus`:
 3. **Test connectivity**: `telnet incus-host 2222`
 4. **Enable debug mode**: Set `-d` flag in `/etc/default/ssh2incus`
 5. **Check permissions**: Ensure your host user belongs to the proper groups (`incus`)
-

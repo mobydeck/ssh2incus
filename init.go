@@ -85,7 +85,7 @@ func init() {
 	flags.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su or default shell")
 	flags.StringVarP(&flagListen, "listen", "l", flagListen, "listen on :2222 or 127.0.0.1:2222")
 	flags.StringVarP(&flagSocket, "socket", "s", flagSocket, "Incus socket or use INCUS_SOCKET")
-	flags.StringVarP(&flagRemote, "url", "u", flagURL, "Incus remote url starting with https://")
+	flags.StringVarP(&flagURL, "url", "u", flagURL, "Incus remote url starting with https://")
 	flags.StringVarP(&flagRemote, "remote", "r", flagRemote, "Incus remote defined in config.yml, e.g. my-remote")
 	flags.StringVarP(&flagClientCert, "client-cert", "c", flagClientCert, "client certificate for remote")
 	flags.StringVarP(&flagClientKey, "client-key", "k", flagClientKey, "client key for remote")
