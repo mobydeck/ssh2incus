@@ -34,7 +34,8 @@ var (
 	flagPprof       = false
 	flagMaster      = false
 	flagBanner      = false
-	flagNoauth      = false
+	flagNoAuth      = false
+	flagInAuth      = false
 	flagWelcome     = false
 	flagListen      = ":2222"
 	flagPprofListen = ":6060"
@@ -79,20 +80,21 @@ func init() {
 	flags.BoolVarP(&flagPprof, "pprof", "", flagPprof, "enable pprof")
 	flags.BoolVarP(&flagMaster, "master", "m", flagMaster, "start master process and spawn workers")
 	flags.BoolVarP(&flagBanner, "banner", "b", flagBanner, "show banner on login")
-	flags.BoolVarP(&flagNoauth, "noauth", "", flagNoauth, "disable SSH authentication completely")
-	flags.BoolVarP(&flagWelcome, "welcome", "w", flagWelcome, "show welcome message to shell users")
+	flags.BoolVarP(&flagNoAuth, "noauth", "", flagNoAuth, "disable SSH authentication completely")
+	flags.BoolVarP(&flagInAuth, "inauth", "", flagInAuth, "enable authentication using instance keys")
+	flags.BoolVarP(&flagWelcome, "welcome", "w", flagWelcome, "show welcome message to users connecting to shell")
 	flags.BoolVarP(&flagVersion, "version", "v", flagVersion, "print version")
-	flags.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su or default shell")
-	flags.StringVarP(&flagListen, "listen", "l", flagListen, "listen on :2222 or 127.0.0.1:2222")
-	flags.StringVarP(&flagSocket, "socket", "s", flagSocket, "Incus socket or use INCUS_SOCKET")
-	flags.StringVarP(&flagURL, "url", "u", flagURL, "Incus remote url starting with https://")
-	flags.StringVarP(&flagRemote, "remote", "r", flagRemote, "Incus remote defined in config.yml, e.g. my-remote")
+	flags.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su, sush or user shell")
+	flags.StringVarP(&flagListen, "listen", "l", flagListen, `listen on ":port" or "host:port"`)
+	flags.StringVarP(&flagSocket, "socket", "s", flagSocket, "Incus socket to connect to (optional, defaults to INCUS_SOCKET env)")
+	flags.StringVarP(&flagURL, "url", "u", flagURL, "Incus remote url to connect to (should start with https://)")
+	flags.StringVarP(&flagRemote, "remote", "r", flagRemote, "default Incus remote to use")
 	flags.StringVarP(&flagClientCert, "client-cert", "c", flagClientCert, "client certificate for remote")
 	flags.StringVarP(&flagClientKey, "client-key", "k", flagClientKey, "client key for remote")
 	flags.StringVarP(&flagServerCert, "server-cert", "t", flagServerCert, "server certificate for remote")
 	flags.StringVarP(&flagGroups, "groups", "g", flagGroups, "list of groups members of which allowed to connect")
-	flags.StringVarP(&flagPprofListen, "pprof-listen", "", flagPprofListen, "pprof listen on :6060 or 127.0.0.1:6060")
-	flags.StringVarP(&flagHealthCheck, "healthcheck", "", flagHealthCheck, "enable Incus health check every X minutes, e.g. \"5m\"")
+	flags.StringVarP(&flagPprofListen, "pprof-listen", "", flagPprofListen, `pprof listen on ":port" or "host:port"`)
+	flags.StringVarP(&flagHealthCheck, "healthcheck", "", flagHealthCheck, `enable Incus health check every X minutes, e.g. "5m"`)
 	err := flags.Parse(args)
 	if err != nil {
 		log.Fatal(err)
@@ -112,10 +114,10 @@ func init() {
 
 	if flagPprof {
 		if flagMaster {
-			log.Warn("pprof is not supported in master mode")
+			log.Warn("pprof: not enabling in master mode")
 			flagPprof = false
 		} else {
-			log.Infof("Enabling pprof on %s", flagPprofListen)
+			log.Infof("pprof: enabling on %s", flagPprofListen)
 			go func() {
 				err := http.ListenAndServe(flagPprofListen, nil)
 				if err != nil {
@@ -139,9 +141,9 @@ func init() {
 	allowedGroups = strings.Split(flagGroups, ",")
 
 	log.SetOutput(os.Stdout)
-	log.SetReportCaller(true)
 	if flagDebug {
 		log.SetLevel(log.DebugLevel)
+		log.SetReportCaller(true)
 		log.SetFormatter(&log.TextFormatter{
 			CallerPrettyfier: func(f *runtime.Frame) (string, string) {
 				filename := path.Base(f.File)
@@ -152,11 +154,11 @@ func init() {
 		log.SetLevel(log.InfoLevel)
 	}
 
-	if flagNoauth {
-		log.Warn("ssh authentication disabled")
+	if flagNoAuth && !flagInAuth {
+		log.Warn("ssh: authentication disabled")
 	}
 
-	log.Debugf("DEBUG logging enabled")
+	log.Debugf("log: DEBUG enabled")
 
 	config := &server.Config{
 		App:           app,
@@ -166,7 +168,8 @@ func init() {
 		Banner:        flagBanner,
 		Listen:        flagListen,
 		Socket:        flagSocket,
-		Noauth:        flagNoauth,
+		NoAuth:        flagNoAuth && !flagInAuth, // inauth overrides noauth
+		InAuth:        flagInAuth,
 		Welcome:       flagWelcome,
 		Shell:         flagShell,
 		Groups:        flagGroups,

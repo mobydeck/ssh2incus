@@ -27,8 +27,8 @@ func init() {
 }
 
 type InstanceUser struct {
-	Instance string
 	Project  string
+	Instance string
 	User     string
 	Uid      int
 	Gid      int
@@ -46,15 +46,11 @@ func (i *InstanceUser) FullInstance() string {
 }
 
 func (c *Client) GetInstanceUser(project, instance, user string) (*InstanceUser, error) {
-	cacheKey := instanceUserKey(project, instance, user)
-	if iu, ok := instanceUserCache.Get(cacheKey); ok {
-		return iu.(*InstanceUser), nil
-	}
-
-	cmd := fmt.Sprintf("getent passwd %s", user)
 	iu, err := queue.EnqueueWithParam(instanceUserQueue, func(i string) (*InstanceUser, error) {
 		stdout := buffer.NewOutputBuffer()
 		stderr := buffer.NewOutputBuffer()
+
+		cmd := fmt.Sprintf("getent passwd %s", user)
 
 		ie := c.NewInstanceExec(InstanceExec{
 			Instance: instance,
@@ -94,6 +90,17 @@ func (c *Client) GetInstanceUser(project, instance, user string) (*InstanceUser,
 		}
 		return iu, nil
 	}, instance)
+
+	return iu, err
+}
+
+func (c *Client) GetCachedInstanceUser(project, instance, user string) (*InstanceUser, error) {
+	cacheKey := instanceUserKey(project, instance, user)
+	if iu, ok := instanceUserCache.Get(cacheKey); ok {
+		return iu.(*InstanceUser), nil
+	}
+
+	iu, err := c.GetInstanceUser(project, instance, user)
 
 	if err == nil {
 		instanceUserCache.SetDefault(cacheKey, iu)

@@ -26,6 +26,10 @@ default:
 version:
     @echo {{version}}
 
+tag tag:
+    git tag {{tag}} HEAD -f
+    git push --tags -f
+
 build:
     just build-sftp-server amd64
     just build-sftp-server arm64

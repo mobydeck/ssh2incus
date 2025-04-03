@@ -74,6 +74,9 @@ type Context interface {
 	// SessionID returns the session hash.
 	SessionID() string
 
+	// ShortSessionID returns first 8 of session hash.
+	ShortSessionID() string
+
 	// ClientVersion returns the version reported by the client.
 	ClientVersion() string
 
@@ -93,7 +96,7 @@ type Context interface {
 	SetValue(key, value interface{})
 }
 
-type sshContext struct {
+type SshContext struct {
 	context.Context
 	*sync.Mutex
 
@@ -101,9 +104,9 @@ type sshContext struct {
 	valuesMu sync.Mutex
 }
 
-func NewContext(srv *Server) (*sshContext, context.CancelFunc) {
+func NewContext(srv *Server) (*SshContext, context.CancelFunc) {
 	innerCtx, cancel := context.WithCancel(context.Background())
-	ctx := &sshContext{Context: innerCtx, Mutex: &sync.Mutex{}, values: make(map[interface{}]interface{})}
+	ctx := &SshContext{Context: innerCtx, Mutex: &sync.Mutex{}, values: make(map[interface{}]interface{})}
 	ctx.SetValue(ContextKeyServer, srv)
 	perms := &Permissions{&gossh.Permissions{}}
 	ctx.SetValue(ContextKeyPermissions, perms)
@@ -124,7 +127,7 @@ func applyConnMetadata(ctx Context, conn gossh.ConnMetadata) {
 	ctx.SetValue(ContextKeyRemoteAddr, conn.RemoteAddr())
 }
 
-func (ctx *sshContext) Value(key interface{}) interface{} {
+func (ctx *SshContext) Value(key interface{}) interface{} {
 	ctx.valuesMu.Lock()
 	defer ctx.valuesMu.Unlock()
 	if v, ok := ctx.values[key]; ok {
@@ -133,39 +136,46 @@ func (ctx *sshContext) Value(key interface{}) interface{} {
 	return ctx.Context.Value(key)
 }
 
-func (ctx *sshContext) SetValue(key, value interface{}) {
+func (ctx *SshContext) SetValue(key, value interface{}) {
 	ctx.valuesMu.Lock()
 	defer ctx.valuesMu.Unlock()
 	ctx.values[key] = value
 }
 
-func (ctx *sshContext) User() string {
+func (ctx *SshContext) User() string {
 	return ctx.Value(ContextKeyUser).(string)
 }
 
-func (ctx *sshContext) SessionID() string {
+func (ctx *SshContext) SessionID() string {
 	return ctx.Value(ContextKeySessionID).(string)
 }
 
-func (ctx *sshContext) ClientVersion() string {
+func (ctx *SshContext) ShortSessionID() string {
+	if ses, ok := ctx.Value(ContextKeySessionID).(string); ok {
+		return ses[:8]
+	}
+	return "unknown"
+}
+
+func (ctx *SshContext) ClientVersion() string {
 	return ctx.Value(ContextKeyClientVersion).(string)
 }
 
-func (ctx *sshContext) ServerVersion() string {
+func (ctx *SshContext) ServerVersion() string {
 	return ctx.Value(ContextKeyServerVersion).(string)
 }
 
-func (ctx *sshContext) RemoteAddr() net.Addr {
+func (ctx *SshContext) RemoteAddr() net.Addr {
 	if addr, ok := ctx.Value(ContextKeyRemoteAddr).(net.Addr); ok {
 		return addr
 	}
 	return nil
 }
 
-func (ctx *sshContext) LocalAddr() net.Addr {
+func (ctx *SshContext) LocalAddr() net.Addr {
 	return ctx.Value(ContextKeyLocalAddr).(net.Addr)
 }
 
-func (ctx *sshContext) Permissions() *Permissions {
+func (ctx *SshContext) Permissions() *Permissions {
 	return ctx.Value(ContextKeyPermissions).(*Permissions)
 }

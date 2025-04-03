@@ -11,12 +11,14 @@ import (
 	"ssh2incus/pkg/incus"
 	"ssh2incus/pkg/ssh"
 	"ssh2incus/pkg/util"
-	stdio_proxy_binary "ssh2incus/server/stdio-proxy-binary"
+	"ssh2incus/server/stdio-proxy-binary"
 
 	"github.com/lxc/incus/v6/shared/api"
 	log "github.com/sirupsen/logrus"
 	gossh "golang.org/x/crypto/ssh"
 )
+
+const directTCPIPChannel = "direct-tcpip"
 
 var (
 	ContextKeyResolvedInstanceAddr = &contextKey{"resolvedInstanceAddress"}
@@ -37,9 +39,11 @@ func (d *localForwardChannelData) String() string {
 }
 
 func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx ssh.Context) {
-	//defer conn.Close()
-	lu, ok := ctx.Value(ContextKeyLoginUser).(*LoginUser)
-	if !ok || !lu.IsValid() {
+	log := log.WithField("session", ctx.ShortSessionID())
+
+	lu := LoginUserFromContext(ctx)
+	log.Debugf("direct-tcpip channel for %s", lu)
+	if !lu.IsValid() {
 		log.Errorf("invalid login for %s", lu)
 		newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("Invalid login for %q (%s)", lu.OrigUser, lu))
 		return
@@ -58,7 +62,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 	destPort := forwardData.DestPort
 	instanceAddr, ok := ctx.Value(ContextKeyResolvedInstanceAddr).(string)
 	if !ok {
-		client, err := NewIncusClientWithContext(ctx, DefaultParams)
+		client, err := NewDefaultIncusClientWithContext(ctx)
 		if err != nil {
 			log.Error(err)
 			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to incus: %v", err))
@@ -66,13 +70,11 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 		}
 		defer client.Disconnect()
 
-		if !lu.IsDefaultProject() {
-			err = client.UseProject(lu.Project)
-			if err != nil {
-				log.Errorf("using project %s error: %s", lu.Project, err)
-				newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot use project %s: %v", lu.Project, err))
-				return
-			}
+		err = client.UseProject(lu.Project)
+		if err != nil {
+			log.Errorf("using project %s error: %s", lu.Project, err)
+			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot use project %s: %v", lu.Project, err))
+			return
 		}
 
 		networks, err := client.GetInstanceNetworks(lu.Project, lu.Instance)
@@ -108,7 +110,7 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 
 	// if connection is not to instance ip we need to create proxy device
 	if destAddr != instanceAddr {
-		client, err := NewIncusClientWithContext(ctx, DefaultParams)
+		client, err := NewDefaultIncusClientWithContext(ctx)
 		if err != nil {
 			log.Error(err)
 			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to incus: %v", err))
@@ -189,8 +191,10 @@ func directTCPIPHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.N
 }
 
 func directTCPIPStdioHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx ssh.Context) {
-	lu, ok := ctx.Value(ContextKeyLoginUser).(*LoginUser)
-	if !ok || !lu.IsValid() {
+	log := log.WithField("session", ctx.ShortSessionID())
+
+	lu := LoginUserFromContext(ctx)
+	if !lu.IsValid() {
 		log.Errorf("invalid login for %s", lu)
 		newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("Invalid login for %q (%s)", lu.OrigUser, lu))
 		return
@@ -209,7 +213,7 @@ func directTCPIPStdioHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan go
 	destPort := forwardData.DestPort
 	instanceAddr, ok := ctx.Value(ContextKeyResolvedInstanceAddr).(string)
 	if !ok {
-		client, err := NewIncusClientWithContext(ctx, DefaultParams)
+		client, err := NewDefaultIncusClientWithContext(ctx)
 		if err != nil {
 			log.Error(err)
 			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to incus: %v", err))
@@ -244,7 +248,7 @@ func directTCPIPStdioHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan go
 
 	// if connection is not to instance ip we need to start stdio proxy
 	if destAddr != instanceAddr {
-		client, err := NewIncusClientWithContext(ctx, DefaultParams)
+		client, err := NewDefaultIncusClientWithContext(ctx)
 		if err != nil {
 			log.Error(err)
 			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to incus: %v", err))
@@ -252,13 +256,11 @@ func directTCPIPStdioHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan go
 		}
 		defer client.Disconnect()
 
-		if !lu.IsDefaultProject() {
-			err = client.UseProject(lu.Project)
-			if err != nil {
-				log.Errorf("using project %s error: %s", lu.Project, err)
-				newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to incus: %v", err))
-				return
-			}
+		err = client.UseProject(lu.Project)
+		if err != nil {
+			log.Errorf("using project %s error: %s", lu.Project, err)
+			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("cannot connect to incus: %v", err))
+			return
 		}
 
 		instance, err := client.GetCachedInstance(lu.Project, lu.Instance)
@@ -302,7 +304,7 @@ func directTCPIPStdioHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan go
 
 		var iu *incus.InstanceUser
 		if lu.InstanceUser != "" {
-			iu, err = client.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+			iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
 			if err != nil {
 				log.Errorf("failed to get instance user for %s: %s", lu, err)
 				newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("failed to get instance user %s: %v", lu.InstanceUser, err))

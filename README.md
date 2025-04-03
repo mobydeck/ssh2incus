@@ -3,16 +3,17 @@
 _β (beta)_
 
 `ssh2incus` provides a full-featured SSH server that connects directly to
-[Incus](https://linuxcontainers.org/incus/introduction/) containers and virtual machines. It runs on the Incus host
+[Incus](https://linuxcontainers.org/incus/) containers and virtual machines. It runs on the Incus host
 and intelligently routes incoming SSH connections to the appropriate instances using the Incus API, eliminating the
-need to run SSH servers inside your instances.
+need to run SSH servers inside the instances.
 
 ## Features
 
 ### Core Features
 
-- **Authentication**: Uses existing host OS SSH keys via `authorized_keys`
-- **No-Auth Mode**: Optional authentication-free mode for local and development environments
+- **Authentication**: Uses existing host ssh keys by default or, additionally, ssh keys inside instances (`--inauth`) 
+- **No-Auth Mode**: Optional authentication-free mode for local and development environments (`--noauth`)
+- **Multiple Remotes**: Connect to any remote from `incus remote list`
 - **Terminal Support**: Full PTY (terminal) mode and remote command execution
 - **File Transfer**: Complete SCP and SFTP support with integrated SFTP server
 - **Port Forwarding**:
@@ -26,6 +27,7 @@ need to run SSH servers inside your instances.
     - Daemon mode: Single process with multiple threads for resource-constrained systems
 
 - **Compatibility**:
+    - Built using Incus 6.x API
     - Works with Incus inside Lima and Colima
     - Tested with **Jetbrains Gateway**, **VSCode**, **Cursor** and other IDEs
     - Full Ansible support
@@ -43,13 +45,13 @@ Download the latest package from the [Releases](https://github.com/mobydeck/ssh2
 ### Debian-based Systems (Ubuntu, Debian)
 
 ```shell
-apt-get install -f ./ssh2incus_0.1.0-0_amd64.deb
+apt-get install -f ./ssh2incus_0.5-0_amd64.deb
 ```
 
 ### RPM-based Systems (RHEL, Fedora, CentOS, AlmaLinux, Rocky Linux)
 
 ```shell
-yum install ./ssh2incus-0.1.0-0.x86_64.rpm
+yum install ./ssh2incus-0.5-0.x86_64.rpm
 ```
 
 ### Service Management
@@ -74,16 +76,17 @@ journalctl -f -u ssh2incus.service
 To establish an SSH connection to an instance running on Incus host, run:
 
 ```shell
-ssh -p 2222 [instance-user@]instance-name[.project-name][+host-user]@incus-host
+ssh -p 2222 [remote:][instance-user@]instance-name[.project-name][+host-user]@incus-host
 ```
 
 Where:
 
+- `instance-name`: Name of a running instance (required)
+- `remote`: Remote name from `incus remote list` (optional, defaults to either current remote or remote set via `-r` flag)
 - `instance-user`: User in the Incus instance (optional, defaults to `root`)
-- `instance-name`: Name of the running instance
 - `project-name`: Incus project name (optional, defaults to `default`)
-- `host-user`: Username on the Incus host (optional, defaults to `root`)
-- `incus-host`: Hostname or IP address of the Incus host
+- `host-user`: User on the Incus host (optional, defaults to `root`)
+- `incus-host`: Hostname or IP address of the Incus host where `ssh2incus` is running (required)
 
 ### Connection Examples
 
@@ -117,6 +120,14 @@ Connect to instance `ubuntu` in `project1` as user `ubuntu`:
 
 ```shell
 ssh -p 2222 ubuntu@ubuntu.project1@1.2.3.4
+```
+
+#### Specify Remote
+
+Connect to instance `ubuntu` in `project1` on remote `incus-prod` as user `ubuntu`:
+
+```shell
+ssh -p 2222 incus-prod:ubuntu@ubuntu.project1@1.2.3.4
 ```
 
 ## Advanced Features
@@ -303,18 +314,19 @@ Modify `ssh2incus` behavior by editing `/etc/default/ssh2incus`. Add configurati
   -g, --groups string         list of groups members of which allowed to connect (default "incus")
       --healthcheck string    enable Incus health check every X minutes, e.g. "5m"
   -h, --help                  print help
-  -l, --listen string         listen on :2222 or 127.0.0.1:2222 (default ":2222")
+      --inauth                enable authentication using instance keys
+  -l, --listen string         listen on ":port" or "host:port" (default ":2222")
   -m, --master                start master process and spawn workers
       --noauth                disable SSH authentication completely
       --pprof                 enable pprof
-      --pprof-listen string   pprof listen on :6060 or 127.0.0.1:6060 (default ":6060")
-  -r, --remote string         Incus remote defined in config.yml, e.g. my-remote
+      --pprof-listen string   pprof listen on ":port" or "host:port" (default ":6060")
+  -r, --remote string         default Incus remote to use
   -t, --server-cert string    server certificate for remote
-      --shell string          shell access command: login, su or default shell
-  -s, --socket string         Incus socket or use INCUS_SOCKET
-  -u, --url string            Incus remote url starting with https://
+      --shell string          shell access command: login, su, sush or user shell
+  -s, --socket string         Incus socket to connect to (optional, defaults to INCUS_SOCKET env)
+  -u, --url string            Incus remote url to connect to (should start with https://)
   -v, --version               print version
-  -w, --welcome               show welcome message to shell users
+  -w, --welcome               show welcome message to users connecting to shell
 ```
 
 #### Configuration Example
@@ -344,7 +356,7 @@ Enable the optional welcome banner with the `-b` flag:
 The banner provides useful context showing:
 - Current user (👤)
 - Container/VM name and project (📦)
-- Host system name (💻)
+- Remote / host system name (💻)
 
 ## Firewall Configuration
 
@@ -405,7 +417,7 @@ For production environments, consider these firewall best practices:
 
 Get help from the community and developers:
 - **GitHub Issues**: Report bugs, request features, or ask questions through the [GitHub repository](https://github.com/mobydeck/ssh2incus/issues)
-- **Documentation**: Refer to the [online documentation](https://github.com/mobydeck/ssh2incus/wiki) for detailed guides and tutorials
+- **Documentation**: Refer to the [online documentation](https://ssh2incus.com/documentation) for detailed guides and tutorials
 
 ### Enterprise Support
 

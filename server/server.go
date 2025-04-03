@@ -20,6 +20,9 @@ import (
 	"gopkg.in/robfig/cron.v2"
 )
 
+const sessionChannel = "session"
+const defaultSubsystem = "default"
+
 type contextKey struct {
 	name string
 }
@@ -293,18 +296,21 @@ func handoffToChild(conn net.Conn) {
 
 func setupServer() *ssh.Server {
 	var authHandler ssh.PublicKeyHandler
-	if config.Noauth {
+
+	switch {
+	case config.InAuth:
+		authHandler = inAuthHandler
+		break
+	case config.NoAuth:
 		authHandler = noAuthHandler
-	} else {
-		authHandler = keyAuthHandler
+		break
+	default:
+		authHandler = hostAuthHandler
 	}
 
-	if !config.Noauth && len(config.AllowedGroups) > 0 {
+	if !config.NoAuth && len(config.AllowedGroups) > 0 {
 		config.AllowedGroups = append([]string{"0"}, getGroupIds(config.AllowedGroups)...)
 	}
-
-	var defaultSubsystemHandler ssh.SubsystemHandler = defaultSubsystemHandler
-	var sftpSubsystemHandler ssh.SubsystemHandler = sftpSubsystemHandler
 
 	var hostSigners []ssh.Signer
 	if keyFiles, err := filepath.Glob("/etc/ssh/ssh_host_*_key"); err == nil {
@@ -321,7 +327,7 @@ func setupServer() *ssh.Server {
 		}
 	}
 
-	forwardHandler := new(ForwardedTCPHandler)
+	forwardHandler := new(ForwardTCPHandler)
 
 	server := &ssh.Server{
 		Addr:             config.Listen,
@@ -329,17 +335,17 @@ func setupServer() *ssh.Server {
 		Version:          "Incus",
 		PublicKeyHandler: authHandler,
 		Handler:          shellHandler,
-		SubsystemHandlers: map[string]ssh.SubsystemHandler{
-			"default": defaultSubsystemHandler,
-			"sftp":    sftpSubsystemHandler,
-		},
 		ChannelHandlers: map[string]ssh.ChannelHandler{
-			"session":      ssh.DefaultSessionHandler,
-			"direct-tcpip": directTCPIPStdioHandler,
+			sessionChannel:     ssh.DefaultSessionHandler,
+			directTCPIPChannel: directTCPIPStdioHandler,
+		},
+		SubsystemHandlers: map[string]ssh.SubsystemHandler{
+			defaultSubsystem: defaultSubsystemHandler,
+			sftpSubsystem:    sftpSubsystemHandler,
 		},
 		RequestHandlers: map[string]ssh.RequestHandler{
-			"tcpip-forward":        forwardHandler.HandleSSHRequest,
-			"cancel-tcpip-forward": forwardHandler.HandleSSHRequest,
+			tcpipForwardRequest:       forwardHandler.HandleSSHRequest,
+			tcpipForwardCancelRequest: forwardHandler.HandleSSHRequest,
 		},
 		ReversePortForwardingCallback: reversePortForwardingCallback,
 		HostSigners:                   hostSigners,

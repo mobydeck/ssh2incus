@@ -64,6 +64,7 @@ func setupEnvironmentVariables(s ssh.Session, iu *incus.InstanceUser, ptyReq ssh
 	env["USER"] = iu.User
 	env["HOME"] = iu.Dir
 	env["SHELL"] = iu.Shell
+	env["SSH_SESSION"] = s.Context().ShortSessionID()
 
 	return env
 }
@@ -98,8 +99,10 @@ func buildCommandString(s ssh.Session, iu *incus.InstanceUser, remoteAddr string
 }
 
 func shellHandler(s ssh.Session) {
-	lu, ok := s.Context().Value(ContextKeyLoginUser).(*LoginUser)
-	if !ok || !lu.IsValid() {
+	log := log.WithField("session", s.Context().ShortSessionID())
+
+	lu := LoginUserFromContext(s.Context())
+	if !lu.IsValid() {
 		log.Errorf("invalid login for %s", lu)
 		io.WriteString(s, fmt.Sprintf("Invalid login for %q (%s)\n", lu.OrigUser, lu))
 		s.Exit(ExitCodeInvalidLogin)
@@ -112,7 +115,7 @@ func shellHandler(s ssh.Session) {
 		return
 	}
 
-	client, err := NewIncusClientWithContext(context.Background(), DefaultParams)
+	client, err := NewDefaultIncusClientWithContext(s.Context())
 	if err != nil {
 		log.Error(err)
 		s.Exit(ExitCodeConnectionError)
@@ -120,21 +123,18 @@ func shellHandler(s ssh.Session) {
 	}
 	defer client.Disconnect()
 
-	// Project handling
-	if !lu.IsDefaultProject() {
-		err = client.UseProject(lu.Project)
-		if err != nil {
-			log.Errorf("error using project %s: %v", lu.Project, err)
-			io.WriteString(s, fmt.Sprintf("unknown project %s\n", lu.Project))
-			s.Exit(ExitCodeInvalidProject)
-			return
-		}
+	err = client.UseProject(lu.Project)
+	if err != nil {
+		log.Errorf("error using project %s: %v", lu.Project, err)
+		io.WriteString(s, fmt.Sprintf("unknown project %s\n", lu.Project))
+		s.Exit(ExitCodeInvalidProject)
+		return
 	}
 
 	// User handling
 	var iu *incus.InstanceUser
 	if lu.InstanceUser != "" {
-		iu, err = client.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+		iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
 		if err != nil {
 			log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
 			io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
@@ -191,9 +191,9 @@ func shellHandler(s ssh.Session) {
 	// Build command string
 	cmd, shouldRunAsUser := buildCommandString(s, iu, s.RemoteAddr().String())
 
-	log.Debugf("shell cmd: %s", cmd)
-	log.Debugf("shell pty: %v", isPty)
-	log.Debugf("shell env: %s", util.MapToEnvString(env))
+	log.Debugf("shell: CMD %s", cmd)
+	log.Debugf("shell: PTY %v", isPty)
+	log.Debugf("shell: ENV %s", util.MapToEnvString(env))
 
 	if config.Welcome && isPty && !isRaw {
 		s.Write(
@@ -238,14 +238,15 @@ func shellHandler(s ssh.Session) {
 	})
 
 	ret, err := ie.Exec()
-	if err != nil {
-		log.Errorf("shell exec failed: %v", err)
+	if err != nil && err != io.EOF && !errors.Is(err, context.Canceled) {
+		log.Errorf("shell: exec failed: %v", err)
 	}
 
 	err = s.Exit(ret)
 	if err != nil && err != io.EOF {
-		log.Errorf("failed to exit ssh session: %v", err)
+		log.Errorf("shell: failed to exit ssh session: %v", err)
 	}
+	log.Debugf("shell: exit %d", ret)
 }
 
 func incusShell(s ssh.Session) {

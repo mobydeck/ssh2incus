@@ -2,7 +2,6 @@ package server
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,32 +17,51 @@ import (
 )
 
 var (
-	// ContextKeyLoginUser is a context key for use with Contexts in this package.
 	ContextKeyLoginUser = &contextKey{"loginUser"}
-)
 
-var (
-	loginUserCache *cache.Cache
+	loginUserCache       *cache.Cache
+	loginUserFailedCache *cache.Cache
 )
 
 func init() {
 	loginUserCache = cache.New(15*time.Minute, 20*time.Minute)
+	loginUserFailedCache = cache.New(1*time.Minute, 2*time.Minute)
 }
 
 type LoginUser struct {
 	OrigUser     string
+	Remote       string
 	User         string
 	Instance     string
 	Project      string
 	InstanceUser string
 	PublicKey    ssh.PublicKey
+
+	ctx ssh.Context
+}
+
+func LoginUserFromContext(ctx ssh.Context) *LoginUser {
+	if lu, ok := ctx.Value(ContextKeyLoginUser).(*LoginUser); ok {
+		return lu
+	}
+	lu := parseLoginUser(ctx.User())
+	lu.ctx = ctx
+	if lu.Remote == "" {
+		lu.Remote = config.Remote
+	}
+	ctx.SetValue(ContextKeyLoginUser, lu)
+	return lu
 }
 
 func (lu *LoginUser) String() string {
 	if lu == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s@%s.%s+%s", lu.InstanceUser, lu.Instance, lu.Project, lu.User)
+	remote := ""
+	if lu.Remote != "" {
+		remote = lu.Remote + ":"
+	}
+	return fmt.Sprintf("%s%s@%s.%s+%s", remote, lu.InstanceUser, lu.Instance, lu.Project, lu.User)
 }
 
 func (lu *LoginUser) FullInstance() string {
@@ -58,6 +76,8 @@ func (lu *LoginUser) IsDefaultProject() bool {
 }
 
 func (lu *LoginUser) IsValid() bool {
+	log := log.WithField("session", lu.ctx.ShortSessionID())
+
 	if lu == nil {
 		return false
 	}
@@ -66,22 +86,27 @@ func (lu *LoginUser) IsValid() bool {
 		return true
 	}
 
+	if _, ok := loginUserFailedCache.Get(lu.Hash()); ok {
+		return false
+	}
 	if _, ok := loginUserCache.Get(lu.Hash()); ok {
 		return true
 	}
 
-	client, err := NewIncusClientWithContext(context.Background(), DefaultParams)
+	client, err := NewDefaultIncusClientWithContext(lu.ctx)
 	if err != nil {
-		log.Error(err)
+		log.Errorf("failed to initialize incus client for %s: %v", lu, err)
 		return false
 	}
-	defer client.Disconnect()
 
-	_, _, err = client.GetInstance(lu.Project, lu.Instance)
-	if err != nil {
-		log.Errorf("getting instance %s error: %s", lu.Instance, err)
+	iu, err := client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+	if err != nil || iu == nil {
+		log.Errorf("instance user %s for %s error: %s", lu.InstanceUser, lu, err)
+		loginUserFailedCache.SetDefault(lu.Hash(), time.Now())
 		return false
 	}
+
+	loginUserFailedCache.Delete(lu.Hash())
 	loginUserCache.SetDefault(lu.Hash(), time.Now())
 	return true
 }
@@ -90,14 +115,14 @@ func (lu *LoginUser) Hash() string {
 	if lu == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s/%s/%s/%s", lu.User, lu.Project, lu.Instance, lu.InstanceUser)
+	return fmt.Sprintf("%s/%s/%s/%s/%s", lu.Remote, lu.User, lu.Project, lu.Instance, lu.InstanceUser)
 }
 
 func (lu *LoginUser) InstanceHash() string {
 	if lu == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s/%s", lu.Project, lu.Instance)
+	return fmt.Sprintf("%s/%s/%s", lu.Remote, lu.Project, lu.Instance)
 }
 
 func getOsUser(username string) (*user.User, error) {
@@ -140,6 +165,11 @@ func parseLoginUser(user string) *LoginUser {
 	lu.OrigUser = user
 	lu.InstanceUser = "root"
 	lu.Project = "default"
+
+	if r, u, ok := strings.Cut(user, ":"); ok {
+		lu.Remote = r
+		user = u
+	}
 
 	instance := user
 	if i, u, ok := strings.Cut(user, "+"); ok {

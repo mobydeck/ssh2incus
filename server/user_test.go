@@ -43,6 +43,20 @@ func TestParseUser(t *testing.T) {
 			Project:      "default",
 			InstanceUser: "iuser",
 		},
+		"remote:iuser@instance": {
+			Remote:       "remote",
+			User:         "root",
+			Instance:     "instance",
+			Project:      "default",
+			InstanceUser: "iuser",
+		},
+		"remote:iuser@instance.project+user": {
+			Remote:       "remote",
+			User:         "user",
+			Instance:     "instance",
+			Project:      "project",
+			InstanceUser: "iuser",
+		},
 	}
 
 	for us, lu := range cases {

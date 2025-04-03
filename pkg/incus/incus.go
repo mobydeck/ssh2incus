@@ -35,6 +35,7 @@ func init() {
 }
 
 type ConnectParams struct {
+	Remote         string
 	Url            string
 	CertFile       string
 	KeyFile        string
@@ -43,12 +44,9 @@ type ConnectParams struct {
 }
 
 type Client struct {
-	srv    incus.InstanceServer
-	params *ConnectParams
-}
-
-func NewClient() *Client {
-	return new(Client)
+	srv     incus.InstanceServer
+	params  *ConnectParams
+	project string
 }
 
 func NewClientWithParams(p *ConnectParams) *Client {
@@ -114,6 +112,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			TLSClientCert: string(certPEM),
 			TLSClientKey:  string(keyPEM),
 			TLSServerCert: string(serverCertPEM),
+			SkipGetServer: true,
 		}
 		c.srv, err = incus.ConnectIncusWithContext(ctx, params.Url, args)
 		return err
@@ -125,62 +124,20 @@ func (c *Client) Connect(ctx context.Context) error {
 }
 
 func (c *Client) UseProject(project string) error {
-	_, _, err := c.srv.GetProject(project)
+	if project == "" {
+		project = "default"
+	}
+	if project == c.project {
+		return nil
+	}
+	p, _, err := c.srv.GetProject(project)
 	if err != nil {
 		return err
 	}
+	project = p.Name
 	c.srv = c.srv.UseProject(project)
+	c.project = project
 	return nil
-}
-
-func (c *Client) GetInstance(project, name string) (*api.Instance, string, error) {
-	err := c.UseProject(project)
-	if err != nil {
-		return nil, "", err
-	}
-	return c.srv.GetInstance(name)
-}
-
-func (c *Client) GetCachedInstanceState(project, instance string) (*api.InstanceState, error) {
-	cacheName := fmt.Sprintf("%s/%s", project, instance)
-	if state, ok := instanceStateCache.Get(cacheName); ok {
-		return state.(*api.InstanceState), nil
-	}
-	err := c.UseProject(project)
-	if err != nil {
-		return nil, err
-	}
-	state, err := queue.EnqueueWithParam(instanceStateQueue, func(i string) (*api.InstanceState, error) {
-		s, _, err := c.srv.GetInstanceState(instance)
-		return s, err
-	}, instance)
-	if err == nil {
-		instanceStateCache.SetDefault(cacheName, state)
-	}
-	return state, err
-}
-
-func (c *Client) UpdateInstance(name string, instance api.InstancePut, ETag string) (incus.Operation, error) {
-	return c.srv.UpdateInstance(name, instance, ETag)
-}
-
-func (c *Client) GetInstancesAllProjects(t api.InstanceType) (instances []api.Instance, err error) {
-	return c.srv.GetInstancesAllProjects(t)
-}
-
-func (c *Client) GetInstanceNetworks(project, instance string) (map[string]api.InstanceStateNetwork, error) {
-	state, err := c.GetCachedInstanceState(project, instance)
-	if err != nil {
-		return nil, err
-	}
-	return state.Network, nil
-}
-
-func IsDefaultProject(project string) bool {
-	if project == "" || project == "default" {
-		return true
-	}
-	return false
 }
 
 func (c *Client) GetConnectionInfo() map[string]interface{} {
@@ -190,4 +147,11 @@ func (c *Client) GetConnectionInfo() map[string]interface{} {
 
 func (c *Client) Disconnect() {
 	c.srv.Disconnect()
+}
+
+func IsDefaultProject(project string) bool {
+	if project == "" || project == "default" {
+		return true
+	}
+	return false
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -60,7 +61,12 @@ func (c *Client) UploadBytes(project, instance, dest string, b io.ReadSeeker, ui
 		WriteMode: "overwrite",
 	}
 
-	err := c.srv.CreateInstanceFile(instance, dest, args)
+	err := c.UseProject(project)
+	if err != nil {
+		return err
+	}
+
+	err = c.srv.CreateInstanceFile(instance, dest, args)
 
 	return err
 }
@@ -127,6 +133,94 @@ func (c *Client) FileExists(params *FileExistsParams) bool {
 
 		return exists
 	}, params)
+}
+
+type InstanceFile struct {
+	Project  string
+	Instance string
+	Name     string
+	Path     string
+	Size     int64
+	Mode     int
+	Uid      int
+	Gid      int
+	Type     string
+	Content  *buffer.BytesBuffer
+}
+
+func (c *Client) DownloadFile(project, instance string, path string) (*InstanceFile, error) {
+	content, resp, err := c.srv.GetInstanceFile(instance, path)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.Type != "file" {
+		return nil, fmt.Errorf("not a file: %s", path)
+	}
+
+	//sftpConn, err := c.srv.GetInstanceFileSFTP(instance)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//defer sftpConn.Close()
+	//
+	//src, err := sftpConn.Open(path)
+	//if err != nil {
+	//	return nil, err
+	//}
+
+	buf := buffer.NewBytesBuffer()
+	defer buf.Close()
+
+	for {
+		_, err = io.CopyN(buf, content, 1024*1024)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+	}
+	content.Close()
+
+	//contentBytes, err := io.ReadAll(content)
+	//if err != nil {
+	//	return nil, err
+	//}
+
+	//srcInfo, err := sftpConn.Lstat(path)
+	//if err != nil {
+	//	return nil, err
+	//}
+
+	//targetIsLink := false
+	//if srcInfo.Mode()&os.ModeSymlink == os.ModeSymlink {
+	//	targetIsLink = true
+	//}
+
+	//var linkName string
+	//if targetIsLink {
+	//	linkName, err = sftpConn.ReadLink(path)
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//}
+
+	//log.Debugf("read %d bytes from %s", buf.Size(), path)
+	//log.Debugf("GetInstanceFile resp %#v", resp)
+
+	return &InstanceFile{
+		Project:  project,
+		Instance: instance,
+		Name:     filepath.Base(path),
+		Path:     path,
+		Size:     buf.Size(),
+		Mode:     resp.Mode,
+		Uid:      int(resp.UID),
+		Gid:      int(resp.GID),
+		Type:     resp.Type,
+		Content:  buf,
+	}, nil
 }
 
 func FileHash(project, instance, path, md5sum string) string {

@@ -53,26 +53,28 @@ func (d *remoteForwardChannelData) String() string {
 }
 
 func reversePortForwardingCallback(ctx ssh.Context, host string, port uint32) bool {
-	lu, ok := ctx.Value(ContextKeyLoginUser).(*LoginUser)
-	if ok && lu.IsValid() {
+	lu := LoginUserFromContext(ctx)
+	if lu.IsValid() {
 		log.Infof("requested reverse port forwarding on %s:%d for %s", host, port, lu)
 	}
 	return true
 }
 
-// ForwardedTCPHandler can be enabled by creating a ForwardedTCPHandler and
+// ForwardTCPHandler can be enabled by creating a ForwardTCPHandler and
 // adding the HandleSSHRequest callback to the server's RequestHandlers under
 // tcpip-forward and cancel-tcpip-forward.
-type ForwardedTCPHandler struct {
+type ForwardTCPHandler struct {
 	forwards map[string]net.Listener
 	sync.Mutex
 }
 
-func (h *ForwardedTCPHandler) HandleSSHRequest(ctx ssh.Context, srv *ssh.Server, req *gossh.Request) (bool, []byte) {
-	lu, ok := ctx.Value(ContextKeyLoginUser).(*LoginUser)
-	if !ok || !lu.IsValid() {
-		log.Errorf("invalid login for %s", lu)
+func (h *ForwardTCPHandler) HandleSSHRequest(ctx ssh.Context, srv *ssh.Server, req *gossh.Request) (bool, []byte) {
+	log := log.WithField("session", ctx.ShortSessionID())
 
+	lu := LoginUserFromContext(ctx)
+	log.Debugf("handle ssh request %s for %s", req.Type, lu)
+	if !lu.IsValid() {
+		log.Errorf("invalid login for %s", lu)
 		return false, []byte(fmt.Sprintf("Invalid login for %q (%s)", lu.OrigUser, lu))
 	}
 
@@ -93,19 +95,17 @@ func (h *ForwardedTCPHandler) HandleSSHRequest(ctx ssh.Context, srv *ssh.Server,
 			return false, []byte("port forwarding is disabled\n")
 		}
 
-		client, err := NewIncusClientWithContext(ctx, DefaultParams)
+		client, err := NewDefaultIncusClientWithContext(ctx)
 		if err != nil {
 			log.Error(err)
 			return false, []byte(fmt.Sprintf("cannot connect to incus: %v\n", err))
 		}
 		defer client.Disconnect()
 
-		if !lu.IsDefaultProject() {
-			err = client.UseProject(lu.Project)
-			if err != nil {
-				log.Errorf("using project %s error: %s", lu.Project, err)
-				return false, []byte(fmt.Sprintf("cannot connect to incus: %v\n", err))
-			}
+		err = client.UseProject(lu.Project)
+		if err != nil {
+			log.Errorf("using project %s error: %s", lu.Project, err)
+			return false, []byte(fmt.Sprintf("cannot connect to incus: %v\n", err))
 		}
 
 		src := net.JoinHostPort(reqPayload.BindAddr, strconv.Itoa(int(reqPayload.BindPort)))

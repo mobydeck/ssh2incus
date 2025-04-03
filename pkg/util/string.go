@@ -1,6 +1,9 @@
 package util
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // MapToEnvString converts a map[string]string to KEY=value format
 func MapToEnvString(m map[string]string) string {
@@ -13,5 +16,7 @@ func MapToEnvString(m map[string]string) string {
 		pairs = append(pairs, key+"="+value)
 	}
 
-	return strings.Join(pairs, ", ")
+	slices.Sort(pairs)
+
+	return strings.Join(pairs, " ")
 }

@@ -154,6 +154,12 @@ func (e *InstanceExec) setupControlHandler() (func(*websocket.Conn), *sync.WaitG
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
+			defer func() {
+				if r := recover(); r != nil {
+					// gorilla websocket may panic sometimes
+				}
+			}()
+
 			for {
 				_, _, err := ws.ReadMessage()
 				if err != nil {

@@ -14,11 +14,6 @@ var (
 	binName = "/bin/ssh2incus-stdio-proxy"
 )
 
-const (
-	Arm64 = "arm64"
-	Amd64 = "amd64"
-)
-
 func init() {
 	if len(arm64Bytes) == 0 {
 		panic("arm64Bytes is empty")

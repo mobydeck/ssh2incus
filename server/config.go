@@ -2,10 +2,11 @@ package server
 
 import (
 	"os"
-	"ssh2incus/pkg"
 	"strconv"
 	"strings"
 	"time"
+
+	"ssh2incus/pkg"
 )
 
 var config *Config
@@ -28,7 +29,8 @@ type Config struct {
 	Master        bool
 	Debug         bool
 	Banner        bool
-	Noauth        bool
+	NoAuth        bool
+	InAuth        bool
 	Welcome       bool
 	AllowedGroups []string
 	IdleTimeout   time.Duration

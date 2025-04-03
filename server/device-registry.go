@@ -1,9 +1,11 @@
 package server
 
 import (
-	"context"
 	"fmt"
+	"strings"
 
+	"ssh2incus/pkg/incus"
+	"ssh2incus/pkg/ssh"
 	"ssh2incus/pkg/util/devicereg"
 
 	"github.com/lxc/incus/v6/shared/api"
@@ -17,7 +19,9 @@ func init() {
 }
 
 func cleanLeftoverProxyDevices() error {
-	client, err := NewIncusClientWithContext(context.Background(), DefaultParams)
+	ctx, cancel := ssh.NewContext(nil)
+	defer cancel()
+	client, err := NewDefaultIncusClientWithContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -28,13 +32,10 @@ func cleanLeftoverProxyDevices() error {
 		return fmt.Errorf("failed to get instances: %w", err)
 	}
 	for _, i := range allInstances {
-		err = client.UseProject(i.Project)
-		if err != nil {
-			log.Errorf("use project %s: %v", i.Project, err)
-			return err
-		}
-
-		for device, _ := range i.Devices {
+		for device := range i.Devices {
+			if !strings.HasPrefix(device, incus.ProxyDevicePrefix) {
+				continue
+			}
 			err = client.DeleteInstanceDevice(&i, device)
 			if err != nil {
 				log.Errorf("delete instance %s.%s device %s: %v", i.Name, i.Project, device, err)

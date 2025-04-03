@@ -7,7 +7,7 @@ import (
 	"ssh2incus/pkg/ssh"
 )
 
-var banner = `
+const banner = `
 ┌──────────────────────────────────────────────┐
 │          _     ____  _                       │
 │  ___ ___| |__ |___ \(_)_ __   ___ _   _ ___  │
@@ -18,17 +18,21 @@ var banner = `
 `
 
 func bannerHandler(ctx ssh.Context) string {
-	lu := parseLoginUser(ctx.User())
+	lu := LoginUserFromContext(ctx)
 	if !lu.IsValid() {
 		return ""
 	}
+	remote := lu.Remote
+	if remote != "" {
+		remote += " / "
+	}
 	hostname, _ := os.Hostname()
 	if hostname != "" {
-		hostname = fmt.Sprintf(" 💻 %s", hostname)
+		hostname = fmt.Sprintf(" 💻 %s%s", remote, hostname)
 	}
-	banner += fmt.Sprintf(
+	b := banner + fmt.Sprintf(
 		"👤 %s 📦 %s.%s%s\n────────────────────────────────────────────────\n",
 		lu.InstanceUser, lu.Instance, lu.Project, hostname,
 	)
-	return banner + "\n"
+	return b + "\n"
 }

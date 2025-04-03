@@ -261,8 +261,8 @@ func (srv *Server) Serve(l net.Listener) error {
 				} else {
 					tempDelay *= 2
 				}
-				if max := 1 * time.Second; tempDelay > max {
-					tempDelay = max
+				if _max := 1 * time.Second; tempDelay > _max {
+					tempDelay = _max
 				}
 				time.Sleep(tempDelay)
 				continue
@@ -279,7 +279,7 @@ func (srv *Server) HandleConn(newConn net.Conn) {
 	srv.HandleConnWithContext(newConn, ctx)
 }
 
-func (srv *Server) HandleConnWithContext(newConn net.Conn, ctx *sshContext) {
+func (srv *Server) HandleConnWithContext(newConn net.Conn, ctx *SshContext) {
 	cancel, ok := ctx.Value(ContextKeyCancelFunc).(context.CancelFunc)
 	if !ok {
 		//var newCtx context.Context
@@ -348,8 +348,6 @@ func (srv *Server) handleRequests(ctx Context, in <-chan *gossh.Request) {
 			req.Reply(false, nil)
 			continue
 		}
-		/*reqCtx, cancel := context.WithCancel(ctx)
-		defer cancel() */
 		ret, payload := handler(ctx, srv, req)
 		req.Reply(ret, payload)
 	}

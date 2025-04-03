@@ -1,19 +1,24 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"ssh2incus/pkg/incus"
+	"ssh2incus/pkg/ssh"
 
 	"github.com/lxc/incus/v6/shared/cliconfig"
 	log "github.com/sirupsen/logrus"
 )
 
-var DefaultParams *incus.ConnectParams = nil
-var incusConnectParams *incus.ConnectParams
+var (
+	ContextKeyIncusClient = &contextKey{"incusClient"}
+
+	DefaultParams *incus.ConnectParams = nil
+
+	incusConnectParams *incus.ConnectParams
+)
 
 func NewIncusClient(params *incus.ConnectParams) (*incus.Client, error) {
 	var err error
@@ -23,26 +28,51 @@ func NewIncusClient(params *incus.ConnectParams) (*incus.Client, error) {
 			return nil, err
 		}
 	}
-	s := incus.NewClientWithParams(params)
-	return s, nil
+	c := incus.NewClientWithParams(params)
+	return c, nil
 }
 
-func NewIncusClientWithContext(ctx context.Context, params *incus.ConnectParams) (*incus.Client, error) {
-	server, err := NewIncusClient(DefaultParams)
+func NewDefaultIncusClientWithContext(ctx ssh.Context) (*incus.Client, error) {
+	return NewIncusClientWithContext(ctx, DefaultParams)
+}
+
+func NewIncusClientWithContext(ctx ssh.Context, params *incus.ConnectParams) (*incus.Client, error) {
+	if c, ok := ctx.Value(ContextKeyIncusClient).(*incus.Client); ok && c != nil {
+		log.WithField("session", ctx.ShortSessionID()).Debug("reusing existing incus client")
+		return c, nil
+	}
+
+	var err error
+	if params == nil {
+		params = DefaultParams
+	}
+
+	if srv, ok := ctx.Value(ssh.ContextKeyServer).(*ssh.Server); ok && srv != nil {
+		lu := LoginUserFromContext(ctx)
+		params, err = incus.RemoteConnectParams(lu.Remote)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	c, err := NewIncusClient(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize incus client: %v", err)
 	}
 
-	err = server.Connect(ctx)
+	err = c.Connect(ctx)
 	if err != nil {
-		server.Disconnect()
 		return nil, fmt.Errorf("failed to connect to incus: %v", err)
 	}
-	return server, nil
+	log.WithField("session", ctx.ShortSessionID()).Debug("new incus client created")
+	ctx.SetValue(ContextKeyIncusClient, c)
+	return c, nil
 }
 
 func (s *Server) checkIncus() error {
-	client, err := NewIncusClientWithContext(context.Background(), DefaultParams)
+	ctx, cancel := ssh.NewContext(nil)
+	defer cancel()
+	client, err := NewDefaultIncusClientWithContext(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to incus: %w", err)
 	}
@@ -65,16 +95,17 @@ func getIncusConnectParams() (*incus.ConnectParams, error) {
 		log.Debugf("Failed to load incus CLI config: %v", err)
 	}
 
-	var url string
+	var url, remote string
 	var certFile, keyFile, serverCertFile string
 
 	// First priority: Check if Remote is set
 	if config.Remote != "" && clicfg != nil {
-		remote, ok := clicfg.Remotes[config.Remote]
+		remoteConfig, ok := clicfg.Remotes[config.Remote]
 		if !ok {
 			return nil, fmt.Errorf("remote '%s' not found in incus configuration", config.Remote)
 		}
-		url = remote.Addr
+		remote = config.Remote
+		url = remoteConfig.Addr
 
 		// For HTTPS connections, determine client certificate paths
 		if strings.HasPrefix(url, "https://") {
@@ -100,6 +131,8 @@ func getIncusConnectParams() (*incus.ConnectParams, error) {
 			if _, err := os.Stat(keyFile); err != nil {
 				return nil, fmt.Errorf("client key not found at %s: %w", keyFile, err)
 			}
+		} else if strings.HasPrefix(url, "unix://") {
+			url = strings.TrimPrefix(url, "unix://")
 		}
 	} else if config.URL != "" {
 		// Second priority: Use URL if set
@@ -135,6 +168,7 @@ func getIncusConnectParams() (*incus.ConnectParams, error) {
 	}
 
 	incusConnectParams = &incus.ConnectParams{
+		Remote:         remote,
 		Url:            url,
 		CertFile:       certFile,
 		KeyFile:        keyFile,
