@@ -90,15 +90,12 @@ func sftpSubsystemHandler(s ssh.Session) {
 	}
 	sftpServerBinBytes = nil
 
-	var iu *incus.InstanceUser
-	if lu.InstanceUser != "" {
-		iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
-		if err != nil {
-			log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
-			io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
-			s.Exit(ExitCodeMetaError)
-			return
-		}
+	iu, err := client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+	if err != nil {
+		log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
+		io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
+		s.Exit(ExitCodeMetaError)
+		return
 	}
 
 	if iu == nil {

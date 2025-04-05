@@ -123,24 +123,13 @@ func shellHandler(s ssh.Session) {
 	}
 	defer client.Disconnect()
 
-	err = client.UseProject(lu.Project)
-	if err != nil {
-		log.Errorf("error using project %s: %v", lu.Project, err)
-		io.WriteString(s, fmt.Sprintf("unknown project %s\n", lu.Project))
-		s.Exit(ExitCodeInvalidProject)
-		return
-	}
-
 	// User handling
-	var iu *incus.InstanceUser
-	if lu.InstanceUser != "" {
-		iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
-		if err != nil {
-			log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
-			io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
-			s.Exit(ExitCodeInvalidLogin)
-			return
-		}
+	iu, err := client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+	if err != nil {
+		log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
+		io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
+		s.Exit(ExitCodeInvalidLogin)
+		return
 	}
 
 	if iu == nil {

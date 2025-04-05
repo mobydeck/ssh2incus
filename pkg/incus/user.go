@@ -50,6 +50,11 @@ func (c *Client) GetInstanceUser(project, instance, user string) (*InstanceUser,
 		stdout := buffer.NewOutputBuffer()
 		stderr := buffer.NewOutputBuffer()
 
+		err := c.UseProject(project)
+		if err != nil {
+			return nil, err
+		}
+
 		cmd := fmt.Sprintf("getent passwd %s", user)
 
 		ie := c.NewInstanceExec(InstanceExec{

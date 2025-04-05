@@ -302,14 +302,11 @@ func directTCPIPStdioHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan go
 		}
 		stdioProxyBinBytes = nil
 
-		var iu *incus.InstanceUser
-		if lu.InstanceUser != "" {
-			iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
-			if err != nil {
-				log.Errorf("failed to get instance user for %s: %s", lu, err)
-				newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("failed to get instance user %s: %v", lu.InstanceUser, err))
-				return
-			}
+		iu, err := client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+		if err != nil {
+			log.Errorf("failed to get instance user for %s: %s", lu, err)
+			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("failed to get instance user %s: %v", lu.InstanceUser, err))
+			return
 		}
 
 		if iu == nil {

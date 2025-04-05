@@ -375,7 +375,7 @@ sudo ufw reload
 sudo ufw status
 ```
 
-### RHEL/CentOS/AlmaLinux/Rocky Linux (firewalld)
+### RHEL / CentOS / AlmaLinux / Rocky Linux (firewalld)
 
 ```shell
 # Allow SSH access on port 2222

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"ssh2incus/pkg/incus"
 	"ssh2incus/pkg/ssh"
 
 	log "github.com/sirupsen/logrus"
@@ -85,22 +84,12 @@ func inAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 		log.Error(err)
 		return false
 	}
-	defer client.Disconnect()
-
-	err = client.UseProject(lu.Project)
-	if err != nil {
-		log.Errorf("auth (instance): error using project %s: %v", lu.Project, err)
-		return false
-	}
 
 	// User handling
-	var iu *incus.InstanceUser
-	if lu.InstanceUser != "" {
-		iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
-		if err != nil {
-			log.Errorf("auth (instance): failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
-			return false
-		}
+	iu, err := client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+	if err != nil {
+		log.Errorf("auth (instance): failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
+		return false
 	}
 
 	if iu == nil {
