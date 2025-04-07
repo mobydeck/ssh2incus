@@ -2,8 +2,11 @@ package pkg
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
+
+	"ssh2incus/pkg/isatty"
 )
 
 type AppConfig struct {
@@ -21,6 +24,7 @@ type App struct {
 	gitHash  string
 	longName string
 	builtAt  string
+	isTTY    bool
 
 	startTime time.Time
 }
@@ -33,6 +37,7 @@ func NewApp(c AppConfig) *App {
 		gitHash:   c.GitHash,
 		builtAt:   c.BuiltAt,
 		startTime: time.Now(),
+		isTTY:     isatty.IsTerminal(os.Stdout.Fd()),
 	}
 	return a
 }
@@ -71,6 +76,14 @@ func (a *App) String() string {
 
 func (a *App) BuiltAt() string {
 	return a.builtAt
+}
+
+func (a *App) IsTTY() bool {
+	return a.isTTY
+}
+
+func (a *App) IsTerminal() bool {
+	return a.isTTY
 }
 
 func (a *App) Uptime() string {

@@ -51,3 +51,24 @@ func (u *User) GroupIds() ([]string, error) {
 	}
 	return u.User.GroupIds()
 }
+
+// GroupNames returns the list of group names that the user is a member of.
+func (u *User) GroupNames() ([]string, error) {
+	if u.IsLuser {
+		return u.lookupUserGroupNames()
+	}
+	groupIds, err := u.User.GroupIds()
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, gid := range groupIds {
+		group, err := user.LookupGroupId(gid)
+		if err != nil {
+			continue
+		}
+		names = append(names, group.Name)
+	}
+
+	return names, nil
+}

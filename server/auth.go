@@ -2,6 +2,7 @@ package server
 
 import (
 	"ssh2incus/pkg/ssh"
+	"ssh2incus/pkg/user"
 
 	log "github.com/sirupsen/logrus"
 	gossh "golang.org/x/crypto/ssh"
@@ -26,9 +27,16 @@ func hostAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 			log.Errorf("auth (host): %s", err)
 			return false
 		}
-		if !isGroupMatch(config.AllowedGroups, userGroups) {
-			log.Warnf("auth (host): no group match for %s in %v", lu.User, userGroups)
+
+		if gid, match := groupMatch(config.AllowedGroups, userGroups); !match {
+			log.Warnf("auth (host): no group match for %s %v in %v", lu.User, userGroups, config.AllowedGroups)
 			return false
+		} else {
+			group, err := user.LookupGroupId(gid)
+			if err != nil {
+				log.Errorf("auth (host): %s", err)
+			}
+			log.Debugf("auth (host): host user %q matched %q group", lu.User, group.Name)
 		}
 	}
 
@@ -62,6 +70,7 @@ func hostAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 	return false
 }
 
+// inAuthHandler performs host auth and instance auth
 func inAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 	log := log.WithField("session", ctx.ShortSessionID())
 
@@ -75,6 +84,11 @@ func inAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 		if !lu.IsValid() {
 			return false
 		}
+	}
+
+	// commands are allowed for host users only
+	if lu.IsCommand() {
+		return false
 	}
 
 	log.Debugf("auth (instance): attempting key auth for %s: %s %s", lu, key.Type(), gossh.FingerprintSHA256(key))

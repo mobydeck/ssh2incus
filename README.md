@@ -26,6 +26,8 @@ need to run SSH servers inside the instances.
     - Master process mode: Maintains SSH connections after service restart
     - Daemon mode: Single process with multiple threads for resource-constrained systems
 
+- **Incus Shell**: Manage Incus over SSH
+
 - **Compatibility**:
     - Built using Incus 6.x API
     - Works with Incus inside Lima and Colima
@@ -45,13 +47,13 @@ Download the latest package from the [Releases](https://github.com/mobydeck/ssh2
 ### Debian-based Systems (Ubuntu, Debian)
 
 ```shell
-apt-get install -f ./ssh2incus_0.5-0_amd64.deb
+apt-get install -f ./ssh2incus_0.6-0_amd64.deb
 ```
 
 ### RPM-based Systems (RHEL, Fedora, CentOS, AlmaLinux, Rocky Linux)
 
 ```shell
-yum install ./ssh2incus-0.5-0.x86_64.rpm
+yum install ./ssh2incus-0.6-0.x86_64.rpm
 ```
 
 ### Service Management
@@ -228,6 +230,47 @@ To enable daemon mode, modify `/etc/default/ssh2incus`: remove `-m` from `ARGS=`
 
 > **Note**: In daemon mode, all active connections will be terminated if the `ssh2incus` service is restarted.
 
+### Incus Shell
+
+The `%shell` command provides direct access to the Incus command line interface from an SSH session,
+allowing you to manage your Incus instances without needing to log into the host directly.
+
+Only root is allowed to connect to Incus shell.
+
+This feature is especially useful for:
+- Quick management tasks without direct host access
+- Systems administration from remote locations
+
+#### Usage
+
+To access the Incus shell, connect using:
+
+```shell
+ssh -p 2222 %shell@incus-host
+```
+
+#### Features
+
+- Interactive Incus command execution
+- Ctrl+C to exit the shell cleanly
+
+#### Example Session
+
+```shell
+$ ssh %shell@incus-colima
+
+incus shell emulator on colima-incus (Ctrl+C to exit)
+
+Hit Enter or type 'help <command>' for help about any command
+
+Type incus command:
+> incus version
+Client version: 6.11
+Server version: 6.11
+
+Type incus command:
+> incus
+```
 
 ## Ansible
 
@@ -292,7 +335,7 @@ instance-d ansible_user=u1@ubuntu ansible_host=incus1 become=yes
 By default, `ssh2incus`:
 
 - Listens on port `2222`
-- Permits authentication for `root` and members of the `incus` group
+- Permits authentication for `root` and members of the `incus`, `incus-admin` groups
 
 To grant a user access permission:
 
@@ -311,7 +354,7 @@ Modify `ssh2incus` behavior by editing `/etc/default/ssh2incus`. Add configurati
   -c, --client-cert string    client certificate for remote
   -k, --client-key string     client key for remote
   -d, --debug                 enable debug log
-  -g, --groups string         list of groups members of which allowed to connect (default "incus")
+  -g, --groups string         list of groups members of which allowed to connect (default "incus,incus-admin")
       --healthcheck string    enable Incus health check every X minutes, e.g. "5m"
   -h, --help                  print help
       --inauth                enable authentication using instance keys
@@ -434,4 +477,4 @@ If you encounter issues with `ssh2incus`:
 2. **Verify service status**: `systemctl status ssh2incus.service`
 3. **Test connectivity**: `telnet incus-host 2222`
 4. **Enable debug mode**: Set `-d` flag in `/etc/default/ssh2incus`
-5. **Check permissions**: Ensure your host user belongs to the proper groups (`incus`)
+5. **Check permissions**: Ensure your host user belongs to the proper groups (`incus` or `incus-admin`)

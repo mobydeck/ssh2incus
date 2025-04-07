@@ -6,7 +6,7 @@ githash := `git rev-parse --short HEAD || echo`
 release := "0"
 builtat := `date -u +"%Y-%m-%dT%H:%M:%SZ"`
 
-sysgroups := "incus"
+sysgroups := "incus,incus-admin"
 
 common_build_flags := "-trimpath -ldflags="
 common_ldflags := "-s -w -extldflags static"

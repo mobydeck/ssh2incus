@@ -55,3 +55,11 @@ func (u *User) lookupUserGroupIds() ([]string, error) {
 
 	return nil, ErrListGroups
 }
+
+func (u *User) lookupUserGroupNames() ([]string, error) {
+	if idExe != "" {
+		return idGroupNameList(u)
+	}
+
+	return nil, ErrListGroups
+}

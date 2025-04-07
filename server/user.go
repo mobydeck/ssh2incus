@@ -35,6 +35,7 @@ type LoginUser struct {
 	Instance     string
 	Project      string
 	InstanceUser string
+	Command      string
 	PublicKey    ssh.PublicKey
 
 	ctx ssh.Context
@@ -61,6 +62,9 @@ func (lu *LoginUser) String() string {
 	if lu.Remote != "" {
 		remote = lu.Remote + ":"
 	}
+	if lu.Command != "" {
+		return fmt.Sprintf("%%%s@%s", lu.Command, lu.User)
+	}
 	return fmt.Sprintf("%s%s@%s.%s+%s", remote, lu.InstanceUser, lu.Instance, lu.Project, lu.User)
 }
 
@@ -82,8 +86,13 @@ func (lu *LoginUser) IsValid() bool {
 		return false
 	}
 
-	if lu.Instance == "%shell" {
-		return true
+	if lu.IsCommand() {
+		switch lu.Command {
+		case "shell":
+			return true
+		default:
+			return false
+		}
 	}
 
 	if _, ok := loginUserFailedCache.Get(lu.Hash()); ok {
@@ -109,6 +118,10 @@ func (lu *LoginUser) IsValid() bool {
 	loginUserFailedCache.Delete(lu.Hash())
 	loginUserCache.SetDefault(lu.Hash(), time.Now())
 	return true
+}
+
+func (lu *LoginUser) IsCommand() bool {
+	return lu.Command != ""
 }
 
 func (lu *LoginUser) Hash() string {
@@ -195,6 +208,12 @@ func parseLoginUser(user string) *LoginUser {
 		lu.Project = "default"
 	}
 
+	if strings.HasPrefix(lu.Instance, "%") {
+		lu.Command = strings.TrimPrefix(lu.Instance, "%")
+		lu.Instance = ""
+		lu.InstanceUser = ""
+	}
+
 	return lu
 }
 
@@ -211,13 +230,13 @@ func getGroupIds(groups []string) []string {
 	return ids
 }
 
-func isGroupMatch(a []string, b []string) bool {
+func groupMatch(a []string, b []string) (string, bool) {
 	for _, i := range a {
 		for _, j := range b {
 			if i == j {
-				return true
+				return i, true
 			}
 		}
 	}
-	return false
+	return "", false
 }

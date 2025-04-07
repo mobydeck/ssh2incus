@@ -103,17 +103,26 @@ func shellHandler(s ssh.Session) {
 
 	lu := LoginUserFromContext(s.Context())
 	if !lu.IsValid() {
-		log.Errorf("invalid login for %s", lu)
+		log.Warnf("invalid login for %s", lu)
 		io.WriteString(s, fmt.Sprintf("Invalid login for %q (%s)\n", lu.OrigUser, lu))
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
-	log.Debugf("shell: connecting %s", lu)
 
-	if lu.User == "root" && lu.Instance == "%shell" {
+	// Only root is allowed to access Incus shell
+	if lu.User == "root" && lu.Command == "shell" {
 		incusShell(s)
 		return
 	}
+
+	if lu.IsCommand() {
+		log.Warnf("shell: command %q not allowed", lu)
+		io.WriteString(s, fmt.Sprintf("%%%s not allowed\n", lu.Command))
+		s.Exit(ExitCodeInvalidLogin)
+		return
+	}
+
+	log.Debugf("shell: connecting %s", lu)
 
 	client, err := NewDefaultIncusClientWithContext(s.Context())
 	if err != nil {
@@ -150,8 +159,8 @@ func shellHandler(s ssh.Session) {
 	if ssh.AgentRequested(s) {
 		al, err := ssh.NewAgentListener()
 		if err != nil {
-			log.Errorf("Failed to create agent listener: %v", err)
-			return
+			log.Errorf("shell: failed to create agent listener: %v", err)
+			io.WriteString(s.Stderr(), fmt.Sprintf("failed to setup agent\n"))
 		}
 
 		defer al.Close()
@@ -173,16 +182,17 @@ func shellHandler(s ssh.Session) {
 				go pd.Shutdown()
 			}()
 		} else {
-			log.Errorf("Failed to add socket: %v", err)
+			log.Errorf("shell: failed to add agent socket: %v", err)
+			io.WriteString(s.Stderr(), fmt.Sprintf("failed to setup agent socket\n"))
 		}
 	}
 
 	// Build command string
 	cmd, shouldRunAsUser := buildCommandString(s, iu, s.RemoteAddr().String())
 
-	log.Debugf("shell: CMD %s", cmd)
+	log.Debugf("shell: CMD %s", oneLine(cmd))
 	log.Debugf("shell: PTY %v", isPty)
-	log.Debugf("shell: ENV %s", util.MapToEnvString(env))
+	log.Debugf("shell: ENV %s", oneLine(util.MapToEnvString(env)))
 
 	if config.Welcome && isPty && !isRaw {
 		s.Write(
@@ -239,7 +249,140 @@ func shellHandler(s ssh.Session) {
 }
 
 func incusShell(s ssh.Session) {
-	cmdString := `bash -c 'while true; do read -r -p "
+	log := log.WithField("session", s.Context().ShortSessionID())
+
+	cmdString := `/bin/bash -c 'while true; do read -r -p "
+Type incus command:
+> incus " a; incus $a; done'`
+
+	args, err := shlex.Split(cmdString, true)
+	if err != nil {
+		log.Errorf("command parsing failed: %v", err)
+		io.WriteString(s, "Internal error: command parsing failed\n")
+		s.Exit(ExitCodeConnectionError)
+		return
+	}
+
+	cmd := exec.Command(args[0], args[1:]...)
+
+	ptyReq, winCh, isPty := s.Pty()
+	if !isPty {
+		io.WriteString(s, "No PTY requested\n")
+		s.Exit(ExitCodeConnectionError)
+		return
+	}
+
+	cmd.Env = append(cmd.Env,
+		fmt.Sprintf("TERM=%s", ptyReq.Term),
+		fmt.Sprintf("SSH_SESSION=%s", s.Context().ShortSessionID()),
+		"PATH=/bin:/usr/bin:/snap/bin:/usr/local/bin",
+	)
+
+	if config.IncusSocket != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("INCUS_SOCKET=%s", config.IncusSocket))
+	}
+
+	log.Debugf("incus shell: CMD %s", oneLine(strings.Join(cmd.Args, " ")))
+	log.Debugf("incus shell: PTY %v", isPty)
+	log.Debugf("incus shell: ENV %s", oneLine(strings.Join(cmd.Env, " ")))
+
+	p, err := pty.Start(cmd)
+	if err != nil {
+		log.Errorf("incus shell: %v", err)
+		io.WriteString(s, "Could not allocate PTY\n")
+		s.Exit(-1)
+	}
+	defer p.Close()
+
+	hostname, _ := os.Hostname()
+	io.WriteString(s, fmt.Sprintf(`
+incus shell emulator on %s (Ctrl+C to exit)
+
+Hit ENTER or type 'help <command>' for help about any command
+`, hostname))
+	go func() {
+		for win := range winCh {
+			setWinsize(p, win.Width, win.Height)
+		}
+	}()
+
+	// Create a context with cancel function to coordinate goroutines
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Handle stdin
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := s.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Errorf("incus shell: stdin read error: %v", err)
+				}
+				cancel() // Signal other goroutines to exit
+				return
+			}
+
+			// Check for Ctrl+C (ASCII value 3)
+			for i := 0; i < n; i++ {
+				if buf[i] == 3 {
+					log.Debugf("incus shell: received Ctrl+C, exiting")
+					io.WriteString(s, "\nExiting incus shell\n")
+					cancel() // Signal other goroutines to exit
+					return
+				}
+			}
+
+			// Write the data to the PTY if we're still running
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if _, err := p.Write(buf[:n]); err != nil {
+					log.Errorf("incus shell: pty write error: %v", err)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	// Handle stdout
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				n, err := p.Read(buf)
+				if err != nil {
+					if err != io.EOF {
+						log.Errorf("incus shell: stdout read error: %v", err)
+					}
+					cancel()
+					return
+				}
+
+				if _, err := s.Write(buf[:n]); err != nil {
+					log.Errorf("incus shell: session write error: %v", err)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for context to be canceled (Ctrl+C or error)
+	<-ctx.Done()
+
+	// Clean exit without waiting for the command
+	s.Exit(0)
+}
+
+// TODO remove once new function has been checked
+func incusShellLegacy(s ssh.Session) {
+	cmdString := `/bin/bash -c 'while true; do read -r -p "
 Type incus command:
 > incus " a; incus $a; done'`
 
@@ -262,9 +405,17 @@ Type incus command:
 
 	cmd.Env = append(cmd.Env,
 		fmt.Sprintf("TERM=%s", ptyReq.Term),
+		fmt.Sprintf("SSH_SESSION=%s", s.Context().ShortSessionID()),
 		"PATH=/bin:/usr/bin:/snap/bin:/usr/local/bin",
-		fmt.Sprintf("INCUS_SOCKET=%s", config.IncusSocket),
 	)
+
+	if config.IncusSocket != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("INCUS_SOCKET=%s", config.IncusSocket))
+	}
+
+	log.Debugf("incus shell: CMD %s", strings.Join(cmd.Args, " "))
+	log.Debugf("incus shell: PTY %v", isPty)
+	log.Debugf("incus shell: ENV %s", strings.Join(cmd.Env, " "))
 
 	p, err := pty.Start(cmd)
 	if err != nil {
@@ -284,11 +435,16 @@ Hit Enter or type 'help' for help
 			setWinsize(p, win.Width, win.Height)
 		}
 	}()
+
 	go func() {
 		io.Copy(p, s) // stdin
 	}()
 	io.Copy(s, p) // stdout
 	cmd.Wait()
+}
+
+func oneLine(lines string) string {
+	return strings.ReplaceAll(lines, "\n", "\\n")
 }
 
 func needsShellWrapping(cmd string) bool {

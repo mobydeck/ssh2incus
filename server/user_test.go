@@ -57,6 +57,10 @@ func TestParseUser(t *testing.T) {
 			Project:      "project",
 			InstanceUser: "iuser",
 		},
+		"%shell": {
+			User:    "root",
+			Command: "shell",
+		},
 	}
 
 	for us, lu := range cases {

@@ -22,6 +22,9 @@ func bannerHandler(ctx ssh.Context) string {
 	if !lu.IsValid() {
 		return ""
 	}
+	if lu.IsCommand() {
+		return banner
+	}
 	remote := lu.Remote
 	if remote != "" {
 		remote += " / "

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
-	"path"
 	"reflect"
 	"runtime"
 	"strings"
@@ -39,7 +38,7 @@ var (
 	flagWelcome     = false
 	flagListen      = ":2222"
 	flagPprofListen = ":6060"
-	flagGroups      = "incus"
+	flagGroups      = "incus,incus-admin"
 	flagSocket      = ""
 	flagURL         = ""
 	flagRemote      = ""
@@ -96,6 +95,7 @@ func init() {
 	flags.StringVarP(&flagPprofListen, "pprof-listen", "", flagPprofListen, `pprof listen on ":port" or "host:port"`)
 	flags.StringVarP(&flagHealthCheck, "healthcheck", "", flagHealthCheck, `enable Incus health check every X minutes, e.g. "5m"`)
 	err := flags.Parse(args)
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -111,6 +111,8 @@ func init() {
 		fmt.Printf("%s\nBuilt at: %s\n", app.LongName(), app.BuiltAt())
 		os.Exit(0)
 	}
+
+	setupLogger()
 
 	if flagPprof {
 		if flagMaster {
@@ -139,20 +141,6 @@ func init() {
 	}
 
 	allowedGroups = strings.Split(flagGroups, ",")
-
-	log.SetOutput(os.Stdout)
-	if flagDebug {
-		log.SetLevel(log.DebugLevel)
-		log.SetReportCaller(true)
-		log.SetFormatter(&log.TextFormatter{
-			CallerPrettyfier: func(f *runtime.Frame) (string, string) {
-				filename := path.Base(f.File)
-				return fmt.Sprintf("> %s()", f.Function), fmt.Sprintf("%s:%d", filename, f.Line)
-			},
-		})
-	} else {
-		log.SetLevel(log.InfoLevel)
-	}
 
 	if flagNoAuth && !flagInAuth {
 		log.Warn("ssh: authentication disabled")
@@ -184,6 +172,26 @@ func init() {
 	}
 
 	server.WithConfig(config).Run()
+}
+
+func setupLogger() {
+	log.SetOutput(os.Stdout)
+	isTerminal := app.IsTerminal()
+	logFormatter := &log.TextFormatter{
+		DisableQuote:              !isTerminal,
+		DisableTimestamp:          !isTerminal,
+		EnvironmentOverrideColors: true,
+	}
+	if flagDebug {
+		log.SetLevel(log.DebugLevel)
+		log.SetReportCaller(true)
+		logFormatter.CallerPrettyfier = func(f *runtime.Frame) (string, string) {
+			return fmt.Sprintf("%s()", f.Function), fmt.Sprintf("%s:%d", f.File, f.Line)
+		}
+	} else {
+		log.SetLevel(log.InfoLevel)
+	}
+	log.SetFormatter(logFormatter)
 }
 
 // parseArgs parses a string into command-line arguments,
