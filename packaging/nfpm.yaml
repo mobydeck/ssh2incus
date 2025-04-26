@@ -8,9 +8,9 @@ section: default
 priority: "extra"
 maintainer: "<mobydeck@users.noreply.github.com>"
 description: |
-  SSH server for Incus containers
+  SSH server for Incus instances
 vendor: mobydeck
-homepage: https://github.com/mobydeck/ssh2incus
+homepage: https://ssh2incus.com
 license: GPL-3.0
 
 provides:
