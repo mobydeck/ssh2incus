@@ -18,14 +18,14 @@ provides:
 
 contents:
   - src: ./build/ssh2incus
-    dst: /bin/ssh2incus
+    dst: /usr/bin/ssh2incus
 
   - src: ./packaging/ssh2incus.env
     dst: /etc/default/ssh2incus
     type: config|noreplace
 
   - src: ./packaging/ssh2incus.service
-    dst: /lib/systemd/system/ssh2incus.service
+    dst: /usr/lib/systemd/system/ssh2incus.service
 
   - src: ./README.md
     dst: /usr/share/doc/ssh2incus/README.md
