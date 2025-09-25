@@ -21,3 +21,4 @@ cmd/nutshell
 .envrc
 makefile
 *.yaml
+**/terminfo/**
