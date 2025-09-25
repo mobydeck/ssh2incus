@@ -19,3 +19,5 @@ cmd/nutshell
 /toybox
 
 .envrc
+makefile
+*.yaml
