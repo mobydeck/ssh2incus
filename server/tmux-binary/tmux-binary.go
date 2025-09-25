@@ -1,6 +1,7 @@
 package tmux_binary
 
 import (
+	"embed"
 	_ "embed"
 	"fmt"
 )
@@ -10,6 +11,9 @@ var (
 	arm64Bytes []byte
 	//go:embed bin/ssh2incus-tmux-amd64.gz
 	amd64Bytes []byte
+
+	//go:embed etc/terminfo
+	terminfoFS embed.FS
 
 	binName = "/bin/ssh2incus-tmux"
 )
@@ -36,4 +40,8 @@ func BinBytes(arch string) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported arch: %s", arch)
 	}
+}
+
+func TerminfoFS() embed.FS {
+	return terminfoFS
 }

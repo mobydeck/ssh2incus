@@ -50,7 +50,7 @@ func TestSetValue(t *testing.T) {
 }
 
 func TestSetValueConcurrency(t *testing.T) {
-	ctx, cancel := newContext(nil)
+	ctx, cancel := NewContext(nil)
 	defer cancel()
 
 	go func() {

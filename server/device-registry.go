@@ -38,7 +38,7 @@ func cleanLeftoverProxyDevices() error {
 			}
 			err = client.DeleteInstanceDevice(&i, device)
 			if err != nil {
-				log.Errorf("delete instance %s.%s device %s: %v", i.Name, i.Project, device, err)
+				log.Errorf("failed to delete leftover device %s on instance %s.%s: %v", i.Name, i.Project, device, err)
 				continue
 			}
 			log.Infof("deleted leftover device %s on instance %s.%s", device, i.Name, i.Project)

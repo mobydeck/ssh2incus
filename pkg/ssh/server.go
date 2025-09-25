@@ -11,6 +11,12 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 )
 
+const (
+	PasswordAuthMethod            = "password"
+	PublickeyAuthMethod           = "publickey"
+	KeyboardInteractiveAuthMethod = "keyboard-interactive"
+)
+
 // ErrServerClosed is returned by the Server's Serve, ListenAndServe,
 // and ListenAndServeTLS methods after a call to Shutdown or Close.
 var ErrServerClosed = errors.New("ssh: Server closed")
@@ -49,6 +55,8 @@ type Server struct {
 	ReversePortForwardingCallback ReversePortForwardingCallback // callback for allowing reverse port forwarding, denies all if nil
 	ServerConfigCallback          ServerConfigCallback          // callback for configuring detailed SSH options
 	SessionRequestCallback        SessionRequestCallback        // callback for allowing or denying SSH sessions
+
+	AuthMethods []string // authentication method chain
 
 	ConnectionFailedCallback ConnectionFailedCallback // callback to report connection failures
 
@@ -146,35 +154,140 @@ func (srv *Server) config(ctx Context) *gossh.ServerConfig {
 			return srv.BannerHandler(ctx)
 		}
 	}
-	if srv.PasswordHandler != nil {
-		config.PasswordCallback = func(conn gossh.ConnMetadata, password []byte) (*gossh.Permissions, error) {
-			applyConnMetadata(ctx, conn)
-			if ok := srv.PasswordHandler(ctx, string(password)); !ok {
-				return ctx.Permissions().Permissions, fmt.Errorf("permission denied")
-			}
-			return ctx.Permissions().Permissions, nil
-		}
-	}
-	if srv.PublicKeyHandler != nil {
-		config.PublicKeyCallback = func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
-			applyConnMetadata(ctx, conn)
-			if ok := srv.PublicKeyHandler(ctx, key); !ok {
-				return ctx.Permissions().Permissions, fmt.Errorf("permission denied")
-			}
-			ctx.SetValue(ContextKeyPublicKey, key)
-			return ctx.Permissions().Permissions, nil
-		}
-	}
-	if srv.KeyboardInteractiveHandler != nil {
-		config.KeyboardInteractiveCallback = func(conn gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error) {
-			applyConnMetadata(ctx, conn)
-			if ok := srv.KeyboardInteractiveHandler(ctx, challenger); !ok {
-				return ctx.Permissions().Permissions, fmt.Errorf("permission denied")
-			}
-			return ctx.Permissions().Permissions, nil
-		}
+
+	// Configure authentication methods based on AuthMethods slice
+	if len(srv.AuthMethods) > 0 {
+		srv.configureAuthChain(ctx, config)
+	} else {
+		srv.configureAllAuthMethods(ctx, config)
 	}
 	return config
+}
+
+// configureAuthChain sets up authentication methods in a chain using PartialSuccess errors.
+// When multiple auth methods are specified, they must be satisfied in sequence.
+// For example, if AuthMethods = ["publickey", "password"], the client must first
+// authenticate with a public key, then with a password.
+func (srv *Server) configureAuthChain(ctx Context, config *gossh.ServerConfig) {
+	// Filter valid methods with available handlers and remove duplicates
+	seen := make(map[string]bool)
+	validMethods := make([]string, 0, len(srv.AuthMethods))
+	for _, method := range srv.AuthMethods {
+		if seen[method] {
+			continue
+		}
+		seen[method] = true
+		switch method {
+		case PasswordAuthMethod:
+			if srv.PasswordHandler != nil {
+				validMethods = append(validMethods, method)
+			}
+		case PublickeyAuthMethod:
+			if srv.PublicKeyHandler != nil {
+				validMethods = append(validMethods, method)
+			}
+		case KeyboardInteractiveAuthMethod:
+			if srv.KeyboardInteractiveHandler != nil {
+				validMethods = append(validMethods, method)
+			}
+		}
+	}
+
+	if len(validMethods) == 0 {
+		return
+	}
+
+	// Build the chain in reverse order
+	var nextPartialSuccess error
+
+	for i := len(validMethods) - 1; i >= 0; i-- {
+		method := validMethods[i]
+
+		switch method {
+		case PasswordAuthMethod:
+			callback := srv.createPasswordCallback(ctx, nextPartialSuccess)
+			if i == 0 {
+				// First method in chain becomes the actual callback
+				config.PasswordCallback = callback
+			}
+			nextPartialSuccess = &gossh.PartialSuccessError{
+				Next: gossh.ServerAuthCallbacks{
+					PasswordCallback: callback,
+				},
+			}
+		case PublickeyAuthMethod:
+			callback := srv.createPublicKeyCallback(ctx, nextPartialSuccess)
+			if i == 0 {
+				// First method in chain becomes the actual callback
+				config.PublicKeyCallback = callback
+			}
+			nextPartialSuccess = &gossh.PartialSuccessError{
+				Next: gossh.ServerAuthCallbacks{
+					PublicKeyCallback: callback,
+				},
+			}
+		case KeyboardInteractiveAuthMethod:
+			callback := srv.createKeyboardInteractiveCallback(ctx, nextPartialSuccess)
+			if i == 0 {
+				// First method in chain becomes the actual callback
+				config.KeyboardInteractiveCallback = callback
+			}
+			nextPartialSuccess = &gossh.PartialSuccessError{
+				Next: gossh.ServerAuthCallbacks{
+					KeyboardInteractiveCallback: callback,
+				},
+			}
+		}
+	}
+}
+
+// configureAllAuthMethods enables all available authentication methods without chaining.
+// This is the default behavior when AuthMethods is empty - any single auth method
+// will be sufficient for authentication.
+func (srv *Server) configureAllAuthMethods(ctx Context, config *gossh.ServerConfig) {
+	if srv.PasswordHandler != nil {
+		config.PasswordCallback = srv.createPasswordCallback(ctx, nil)
+	}
+	if srv.PublicKeyHandler != nil {
+		config.PublicKeyCallback = srv.createPublicKeyCallback(ctx, nil)
+	}
+	if srv.KeyboardInteractiveHandler != nil {
+		config.KeyboardInteractiveCallback = srv.createKeyboardInteractiveCallback(ctx, nil)
+	}
+}
+
+// createPasswordCallback creates the password authentication callback
+func (srv *Server) createPasswordCallback(ctx Context, nextAuth error) func(gossh.ConnMetadata, []byte) (*gossh.Permissions, error) {
+	return func(conn gossh.ConnMetadata, password []byte) (*gossh.Permissions, error) {
+		applyConnMetadata(ctx, conn)
+		if !srv.PasswordHandler(ctx, string(password)) {
+			return ctx.Permissions().Permissions, fmt.Errorf("permission denied")
+		}
+		return ctx.Permissions().Permissions, nextAuth
+	}
+}
+
+// createPublicKeyCallback creates the public key authentication callback
+func (srv *Server) createPublicKeyCallback(ctx Context, nextAuth error) func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error) {
+	return func(conn gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+		applyConnMetadata(ctx, conn)
+		if !srv.PublicKeyHandler(ctx, key) {
+			return ctx.Permissions().Permissions, fmt.Errorf("permission denied")
+		}
+		ctx.SetValue(ContextKeyPublicKey, key)
+		return ctx.Permissions().Permissions, nextAuth
+	}
+}
+
+// createKeyboardInteractiveCallback creates the keyboard-interactive authentication callback
+func (srv *Server) createKeyboardInteractiveCallback(ctx Context, nextAuth error) func(gossh.ConnMetadata, gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error) {
+	return func(conn gossh.ConnMetadata, challenger gossh.KeyboardInteractiveChallenge) (*gossh.Permissions, error) {
+		applyConnMetadata(ctx, conn)
+		if !srv.KeyboardInteractiveHandler(ctx, challenger) {
+			return ctx.Permissions().Permissions, fmt.Errorf("permission denied")
+		}
+		return ctx.Permissions().Permissions, nextAuth
+	}
 }
 
 // Handle sets the Handler for the server.

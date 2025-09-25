@@ -7,10 +7,12 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
 	"ssh2incus/pkg"
+	"ssh2incus/pkg/ssh"
 	"ssh2incus/server"
 
 	log "github.com/sirupsen/logrus"
@@ -35,13 +37,17 @@ var (
 	flagBanner      = false
 	flagNoAuth      = false
 	flagInAuth      = false
+	flagPassAuth    = false
+	flagAllowCreate = false
 	flagWelcome     = false
 	flagListen      = ":2222"
 	flagPprofListen = ":6060"
 	flagGroups      = "incus,incus-admin"
+	flagTermMux     = "tmux"
 	flagSocket      = ""
 	flagURL         = ""
 	flagRemote      = ""
+	flagAuthMethods = ""
 	flagClientCert  = ""
 	flagClientKey   = ""
 	flagServerCert  = ""
@@ -80,20 +86,24 @@ func init() {
 	flags.BoolVarP(&flagMaster, "master", "m", flagMaster, "start master process and spawn workers")
 	flags.BoolVarP(&flagBanner, "banner", "b", flagBanner, "show banner on login")
 	flags.BoolVarP(&flagNoAuth, "noauth", "", flagNoAuth, "disable SSH authentication completely")
-	flags.BoolVarP(&flagInAuth, "inauth", "", flagInAuth, "enable authentication using instance keys")
+	flags.BoolVarP(&flagInAuth, "inauth", "I", flagInAuth, "enable authentication using instance keys")
+	flags.BoolVarP(&flagPassAuth, "password-auth", "P", flagPassAuth, "enable password authentication")
+	flags.BoolVarP(&flagAllowCreate, "allow-create", "C", flagAllowCreate, "allow creating new instances")
 	flags.BoolVarP(&flagWelcome, "welcome", "w", flagWelcome, "show welcome message to users connecting to shell")
 	flags.BoolVarP(&flagVersion, "version", "v", flagVersion, "print version")
-	flags.StringVarP(&flagShell, "shell", "", flagShell, "shell access command: login, su, sush or user shell")
+	flags.StringVarP(&flagShell, "shell", "S", flagShell, "shell access command: login, su, sush or user shell (default)")
 	flags.StringVarP(&flagListen, "listen", "l", flagListen, `listen on ":port" or "host:port"`)
 	flags.StringVarP(&flagSocket, "socket", "s", flagSocket, "Incus socket to connect to (optional, defaults to INCUS_SOCKET env)")
 	flags.StringVarP(&flagURL, "url", "u", flagURL, "Incus remote url to connect to (should start with https://)")
 	flags.StringVarP(&flagRemote, "remote", "r", flagRemote, "default Incus remote to use")
+	flags.StringVarP(&flagAuthMethods, "auth-methods", "", flagAuthMethods, `enable auth method chain, e.g.: "publickey,password"`)
 	flags.StringVarP(&flagClientCert, "client-cert", "c", flagClientCert, "client certificate for remote")
 	flags.StringVarP(&flagClientKey, "client-key", "k", flagClientKey, "client key for remote")
 	flags.StringVarP(&flagServerCert, "server-cert", "t", flagServerCert, "server certificate for remote")
 	flags.StringVarP(&flagGroups, "groups", "g", flagGroups, "list of groups members of which allowed to connect")
+	flags.StringVarP(&flagTermMux, "term-mux", "T", flagGroups, "terminal multiplexer: tmux (default) or screen")
 	flags.StringVarP(&flagPprofListen, "pprof-listen", "", flagPprofListen, `pprof listen on ":port" or "host:port"`)
-	flags.StringVarP(&flagHealthCheck, "healthcheck", "", flagHealthCheck, `enable Incus health check every X minutes, e.g. "5m"`)
+	flags.StringVarP(&flagHealthCheck, "healthcheck", "H", flagHealthCheck, `enable Incus health check every X minutes, e.g. "5m"`)
 	err := flags.Parse(args)
 
 	if err != nil {
@@ -146,6 +156,23 @@ func init() {
 		log.Warn("ssh: authentication disabled")
 	}
 
+	authMethods, err := parseAuthMethods(flagAuthMethods)
+	if err != nil {
+		log.Fatalf("auth-methods: %v", err)
+	} else {
+		if len(authMethods) > 0 {
+			log.Warnf("auth: enabled authentication methods chain: %s", strings.Join(authMethods, ","))
+			if flagNoAuth {
+				log.Warn("auth: noauth cannot be enabled with auth-methods")
+				flagNoAuth = false
+			}
+		}
+		// Enabled password auth if it's part of auth methods chain
+		if slices.Contains(authMethods, ssh.PasswordAuthMethod) {
+			flagPassAuth = true
+		}
+	}
+
 	log.Debugf("log: DEBUG enabled")
 
 	config := &server.Config{
@@ -158,10 +185,14 @@ func init() {
 		Socket:        flagSocket,
 		NoAuth:        flagNoAuth && !flagInAuth, // inauth overrides noauth
 		InAuth:        flagInAuth,
+		PassAuth:      flagPassAuth,
+		AllowCreate:   flagAllowCreate,
 		Welcome:       flagWelcome,
 		Shell:         flagShell,
 		Groups:        flagGroups,
+		TermMux:       flagTermMux,
 		HealthCheck:   flagHealthCheck,
+		AuthMethods:   authMethods,
 		AllowedGroups: allowedGroups,
 		ClientCert:    flagClientCert,
 		ClientKey:     flagClientKey,
@@ -235,4 +266,38 @@ func parseArgs(s string) []string {
 	}
 
 	return args
+}
+
+// parseAuthMethods parses the flagAuthMethods string into a slice of valid authentication methods.
+// It supports comma-separated values from the set: "publickey", "password", etc.
+// Returns an error if any invalid method is specified.
+func parseAuthMethods(flagAuthMethods string) ([]string, error) {
+	defaultMethods := []string{}
+	if flagAuthMethods == "" {
+		return defaultMethods, nil
+	}
+
+	methods := strings.Split(flagAuthMethods, ",")
+	validMethods := map[string]bool{
+		ssh.PasswordAuthMethod:  true,
+		ssh.PublickeyAuthMethod: true,
+		//ssh.KeyboardInteractiveAuthMethod: true, // not yet supported
+	}
+
+	result := make([]string, 0, len(methods))
+
+	for _, method := range methods {
+		method = strings.TrimSpace(method)
+		if !validMethods[method] {
+			return nil, fmt.Errorf("invalid authentication method: %s", method)
+		}
+		result = append(result, method)
+	}
+
+	// Ensure at least one method is specified
+	if len(result) == 0 {
+		return defaultMethods, nil
+	}
+
+	return result, nil
 }

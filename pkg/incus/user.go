@@ -21,7 +21,7 @@ var (
 
 func init() {
 	instanceUserOnce.Do(func() {
-		instanceUserCache = cache.New(20*time.Minute, 30*time.Minute)
+		instanceUserCache = cache.New(1*time.Minute, 2*time.Minute)
 		instanceUserQueue = queue.New[*InstanceUser](100)
 	})
 }
@@ -112,6 +112,11 @@ func (c *Client) GetCachedInstanceUser(project, instance, user string) (*Instanc
 	}
 
 	return iu, err
+}
+
+func (c *Client) UncacheInstanceUser(project, instance, user string) {
+	cacheKey := instanceUserKey(project, instance, user)
+	instanceUserCache.Delete(cacheKey)
 }
 
 func instanceUserKey(project, instance, user string) string {

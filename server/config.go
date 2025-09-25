@@ -26,12 +26,16 @@ type Config struct {
 	ClientCert    string
 	ClientKey     string
 	ServerCert    string
+	TermMux       string
 	Master        bool
 	Debug         bool
 	Banner        bool
 	NoAuth        bool
 	InAuth        bool
+	PassAuth      bool
+	AllowCreate   bool
 	Welcome       bool
+	AuthMethods   []string
 	AllowedGroups []string
 	IdleTimeout   time.Duration
 

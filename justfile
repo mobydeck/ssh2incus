@@ -30,6 +30,9 @@ tag tag:
     git tag {{tag}} HEAD -f
     git push --tags -f
 
+test:
+    go test ./...
+
 build:
     just build-sftp-server amd64
     just build-sftp-server arm64
@@ -67,6 +70,13 @@ build-stdio-proxy arch:
         cmd/stdio-proxy/stdio-proxy.go
     gzip -9 -f -k ./server/stdio-proxy-binary/bin/{{name}}-stdio-proxy-{{arch}}
 
+download-tmux-all:
+    just download-tmux amd64
+    just download-tmux arm64
+
+download-tmux arch:
+    mkdir -p server/tmux-binary/bin
+    curl -o server/tmux-binary/bin/ssh2incus-tmux-{{arch}}.gz -L https://github.com/arthurpro/tmux-static-build/releases/download/3.5a/tmux.linux-{{arch}}.gz
 
 build-all: clean create-dist
     just build-sftp-server-all

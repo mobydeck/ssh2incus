@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"ssh2incus/pkg/shlex"
 	"ssh2incus/pkg/ssh"
 	"ssh2incus/pkg/util"
+	"ssh2incus/pkg/util/buffer"
 
 	"github.com/creack/pty"
 	log "github.com/sirupsen/logrus"
@@ -53,11 +55,12 @@ func setupEnvironmentVariables(s ssh.Session, iu *incus.InstanceUser, ptyReq ssh
 		}
 	}
 
-	// Set terminal info
-	if ptyReq.Term != "" {
-		env["TERM"] = ptyReq.Term
-	} else {
-		env["TERM"] = "xterm-256color"
+	if _, ok := env["TERM"]; !ok {
+		if ptyReq.Term != "" {
+			env["TERM"] = ptyReq.Term
+		} else {
+			env["TERM"] = "xterm-256color"
+		}
 	}
 
 	// Set user info
@@ -81,8 +84,12 @@ func buildCommandString(s ssh.Session, iu *incus.InstanceUser, remoteAddr string
 		case ShellSush:
 			cmd = fmt.Sprintf("sush %q", iu.User)
 		case ShellLogin:
-			host := strings.Split(remoteAddr, ":")[0]
-			cmd = fmt.Sprintf("login -h %q -f %q", host, iu.User)
+			h := ""
+			host, _, err := net.SplitHostPort(remoteAddr)
+			if err == nil {
+				h = fmt.Sprintf("-h %q ", host)
+			}
+			cmd = fmt.Sprintf("login %s-f %q", h, iu.User)
 		default:
 			shouldRunAsUser = true
 			cmd = fmt.Sprintf("%s -l", iu.Shell)
@@ -96,6 +103,103 @@ func buildCommandString(s ssh.Session, iu *incus.InstanceUser, remoteAddr string
 	}
 
 	return cmd, shouldRunAsUser
+}
+
+func checkTermMux(tmux *TermMux, c *incus.Client, lu *LoginUser, iu *incus.InstanceUser, env map[string]string) error {
+	existsParams := &incus.CommandExistsParams{
+		Project:     lu.Project,
+		Instance:    lu.Instance,
+		Path:        tmux.Name(),
+		ShouldCache: true,
+	}
+	if !c.CommandExists(existsParams) {
+		log.Debugf("command not found: %s", tmux.Name())
+		// DISABLED until fully tested
+		// use built-in static binary for tmux
+		//if config.TermMux == "tmux" {
+		//	client, err := NewDefaultIncusClientWithContext(tmux.ctx)
+		//	if err != nil {
+		//		return err
+		//	}
+		//	defer client.Disconnect()
+		//
+		//	if !lu.IsDefaultProject() {
+		//		err = client.UseProject(lu.Project)
+		//		if err != nil {
+		//			return err
+		//		}
+		//	}
+		//	instance, err := client.GetCachedInstance(lu.Project, lu.Instance)
+		//	if err != nil {
+		//		return fmt.Errorf("cannot get instance for %s: %v", lu, err)
+		//	}
+		//	tmuxBinBytes, err := tmux_binary.BinBytes(instance.Architecture)
+		//	if err != nil {
+		//		return fmt.Errorf("failed to get tmux binary for %s: %v", instance.Architecture, err)
+		//	}
+		//	tmuxBinBytes, err = util.Ungz(tmuxBinBytes)
+		//	if err != nil {
+		//		return fmt.Errorf("failed to ungzip tmux: %v", err)
+		//	}
+		//	err = client.UploadBytes(lu.Project, lu.Instance, tmux_binary.BinName(), bytes.NewReader(tmuxBinBytes), 0, 0, 0755)
+		//	if err != nil {
+		//		return fmt.Errorf("upload failed: %v", err)
+		//	}
+		//
+		//	terminfoPath := "etc/terminfo/x/xterm-256color"
+		//	terminfoBytes, err := tmux_binary.TerminfoFS().ReadFile(terminfoPath)
+		//	if err != nil {
+		//		return fmt.Errorf("failed to get terminfo library %s: %v", terminfoPath, err)
+		//	}
+		//	err = client.UploadBytes(lu.Project, lu.Instance, "/"+terminfoPath, bytes.NewReader(terminfoBytes), 0, 0, 0755)
+		//	if err != nil {
+		//		return fmt.Errorf("upload failed: %v", err)
+		//	}
+		//
+		//} else {
+		err := c.InstallPackages(lu.Project, lu.Instance, []string{tmux.Name()})
+		if err != nil {
+			return err
+		}
+		//}
+	}
+
+	uid, gid := iu.Uid, iu.Gid
+	stdout := buffer.NewOutputBuffer()
+	stderr := buffer.NewOutputBuffer()
+	ie := c.NewInstanceExec(incus.InstanceExec{
+		Instance: lu.Instance,
+		Cmd:      tmux.List(),
+		Stdout:   stdout,
+		Stderr:   stderr,
+		User:     uid,
+		Group:    gid,
+	})
+	ret, err := ie.Exec()
+	if err != nil && err != io.EOF {
+		log.Errorf("%s: list failed: %v", tmux.Name(), err)
+	}
+
+	if !tmux.SessionExists(stdout.Lines()) {
+		ie = c.NewInstanceExec(incus.InstanceExec{
+			Instance: lu.Instance,
+			Cmd:      tmux.New(),
+			Env:      env,
+			User:     uid,
+			Group:    gid,
+			Cwd:      iu.Dir,
+		})
+		ret, err = ie.Exec()
+		if err != nil && err != io.EOF {
+			log.Errorf("%s: new session failed: %v", tmux.Name(), err)
+		}
+
+		if ret != 0 {
+			return fmt.Errorf("%s: new session failed with non-zero exit code: %d", tmux.Name(), ret)
+		}
+	}
+
+	return nil
 }
 
 func shellHandler(s ssh.Session) {
@@ -122,8 +226,6 @@ func shellHandler(s ssh.Session) {
 		return
 	}
 
-	log.Debugf("shell: connecting %s", lu)
-
 	client, err := NewDefaultIncusClientWithContext(s.Context())
 	if err != nil {
 		log.Error(err)
@@ -132,24 +234,104 @@ func shellHandler(s ssh.Session) {
 	}
 	defer client.Disconnect()
 
-	// User handling
-	iu, err := client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
-	if err != nil {
-		log.Errorf("failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
-		io.WriteString(s, fmt.Sprintf("cannot get instance user %s\n", lu.InstanceUser))
-		s.Exit(ExitCodeInvalidLogin)
-		return
+	var iu *incus.InstanceUser
+	if lu.CreateInstance && config.AllowCreate {
+		iu, _ = client.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+
+		// Only attempt to create an instance if it doesn't exist
+		if iu == nil {
+			log.Debugf("shell: creating instance %s", lu)
+			io.WriteString(s, fmt.Sprintf("creating instance...\n"))
+
+			home, _ := os.UserHomeDir()
+			createConfigDefaults, err := LoadCreateConfigWithFallback(
+				[]string{
+					"",
+					path.Join(home, ".config", config.App.Name()),
+					path.Join("/etc", config.App.Name()),
+				})
+			if err != nil {
+				log.Error(err)
+			}
+
+			params := incus.CreateInstanceParams{
+				Name:      lu.Instance,
+				Project:   lu.Project,
+				Image:     createConfigDefaults.Image,
+				Memory:    createConfigDefaults.MemoryInt(),
+				Cpu:       createConfigDefaults.CpuInt(),
+				Disk:      createConfigDefaults.DiskInt(),
+				Ephemeral: createConfigDefaults.Ephemeral,
+				Vm:        createConfigDefaults.Vm,
+				Config:    createConfigDefaults.Config,
+				Devices:   createConfigDefaults.Devices,
+			}
+
+			if lu.CreateConfig.Image != nil {
+				params.Image = *lu.CreateConfig.Image
+			}
+
+			if lu.CreateConfig.Memory != nil {
+				params.Memory = *lu.CreateConfig.Memory
+			}
+
+			if lu.CreateConfig.Cpu != nil {
+				params.Cpu = *lu.CreateConfig.Cpu
+			}
+
+			if lu.CreateConfig.Disk != nil {
+				params.Disk = *lu.CreateConfig.Disk
+			}
+
+			if lu.CreateConfig.Ephemeral != nil {
+				params.Ephemeral = *lu.CreateConfig.Ephemeral
+			}
+
+			if lu.CreateConfig.Nesting != nil {
+				params.Nesting = *lu.CreateConfig.Nesting
+			}
+
+			if lu.CreateConfig.Privileged != nil {
+				params.Privileged = *lu.CreateConfig.Privileged
+			}
+
+			if lu.CreateConfig.Vm != nil {
+				params.Vm = *lu.CreateConfig.Vm
+			}
+
+			log.Debugf("shell: create instance config: %+v", params)
+
+			_, err = client.CreateInstance(params)
+			if err != nil {
+				log.Warnf("shell: failed to create instance %s: %v", lu, err)
+				io.WriteString(s, fmt.Sprintf("cannot create instance:\n%s\n", err))
+				s.Exit(ExitCodeInternalError)
+				return
+			}
+		}
+	}
+
+	log.Debugf("shell: connecting %s", lu)
+
+	if iu == nil {
+		iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+		if err != nil {
+			log.Errorf("shell: failed to get instance user %q for %s: %s", lu.InstanceUser, lu, err)
+			io.WriteString(s, fmt.Sprintf("cannot get instance user %q\n", lu.InstanceUser))
+			s.Exit(ExitCodeInvalidLogin)
+			return
+		}
 	}
 
 	if iu == nil {
+		log.Errorf("shell: not found instance user for %q", lu)
 		io.WriteString(s, fmt.Sprintf("not found user or instance for %q\n", lu))
-		log.Errorf("shell: not found instance user for %s", lu)
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
 
 	// Get PTY information
-	ptyReq, winCh, isPty := s.Pty()
+	ptyReq, sshWinCh, isPty := s.Pty()
 	isRaw := s.RawCommand() != ""
 
 	// Setup environment
@@ -190,6 +372,27 @@ func shellHandler(s ssh.Session) {
 	// Build command string
 	cmd, shouldRunAsUser := buildCommandString(s, iu, s.RemoteAddr().String())
 
+	if lu.Persistent {
+		usePrefix := false
+		//if config.TermMux == "tmux" {
+		//	usePrefix = true
+		//  env["TERM"] = "xterm-256color"
+		//}
+		tmux, err := NewTermMux(s.Context(), config.TermMux, config.App.Name(), usePrefix)
+		if err != nil {
+			log.Errorf("shell: failed to initialize terminal mux: %v", err)
+			io.WriteString(s.Stderr(), fmt.Sprintf("failed to create persistent session\n"))
+		}
+		err = checkTermMux(tmux, client, lu, iu, env)
+		if err != nil {
+			log.Errorf("shell: failed to create persistent session: %v", err)
+			io.WriteString(s.Stderr(), fmt.Sprintf("failed to create persistent session:\n%s\n", err))
+		}
+
+		shouldRunAsUser = true
+		cmd = tmux.Attach()
+	}
+
 	log.Debugf("shell: CMD %s", oneLine(cmd))
 	log.Debugf("shell: PTY %v", isPty)
 	log.Debugf("shell: ENV %s", oneLine(util.MapToEnvString(env)))
@@ -207,14 +410,9 @@ func shellHandler(s ssh.Session) {
 	}()
 
 	//Setup window size channel
-	windowChannel := make(incus.WindowChannel)
-	defer close(windowChannel)
-
-	go func() {
-		for win := range winCh {
-			windowChannel <- incus.Window{Width: win.Width, Height: win.Height}
-		}
-	}()
+	incusWinCh := make(incus.WindowChannel)
+	defer close(incusWinCh)
+	startWindowChannel(sshWinCh, incusWinCh)
 
 	var uid, gid int
 	if shouldRunAsUser {
@@ -227,7 +425,7 @@ func shellHandler(s ssh.Session) {
 		Env:      env,
 		IsPty:    isPty,
 		Window:   incus.Window(ptyReq.Window),
-		WinCh:    windowChannel,
+		WinCh:    incusWinCh,
 		Stdin:    stdin,
 		Stdout:   s,
 		Stderr:   stderr,
@@ -719,6 +917,24 @@ func setupShellPipesWithCleanup(s ssh.Session) (io.ReadCloser, io.WriteCloser) {
 	}
 
 	return cleanupStdin, cleanupStderr
+}
+
+func startWindowChannel(inputCh <-chan ssh.Window, outputCh chan<- incus.Window) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Debugf("shell: recovered from panic: %v", r)
+			}
+		}()
+
+		for win := range inputCh {
+			select {
+			case outputCh <- incus.Window{Width: win.Width, Height: win.Height}:
+			default:
+				log.Debug("shell: cannot send window size to channel, channel may be closed")
+			}
+		}
+	}()
 }
 
 func setWinsize(f *os.File, w, h int) {

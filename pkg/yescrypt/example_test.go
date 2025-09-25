@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/openwall/yescrypt-go"
+	"ssh2incus/pkg/yescrypt"
 )
 
 func Example() {

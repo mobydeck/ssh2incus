@@ -1,3 +1,5 @@
+# version of this instance template
+version: 1
 # image for new instance
 image: alpine/edge
 # create ephemeral instance
@@ -6,13 +8,13 @@ ephemeral: false
 memory: 1
 # number of CPUs, 0 for unlimited
 cpu: 1
-# create VM
+# root disk size in GiB, 0 for unlimited
+disk: 10
+# create VM instance
 vm: false
 
 # instance devices
-#devices:
-#  root:
-#    size: 10 # size in GiB
+devices: {}
 
 # instance configs
 config:

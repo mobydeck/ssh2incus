@@ -5,8 +5,7 @@
 /release
 /.go
 _examples/
-server/sftp-server-binary/bin/
-server/stdio-proxy-binary/bin/
+server/*/bin/
 
 /ansible
 Makefile

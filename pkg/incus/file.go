@@ -135,6 +135,42 @@ func (c *Client) FileExists(params *FileExistsParams) bool {
 	}, params)
 }
 
+type CommandExistsParams struct {
+	Project     string
+	Instance    string
+	Path        string
+	ShouldCache bool
+}
+
+func (c *Client) CommandExists(params *CommandExistsParams) bool {
+	return queue.EnqueueFnWithParam(fileExistsQueue, func(p *CommandExistsParams) bool {
+		var fileHash string
+		if p.ShouldCache {
+			fileHash = FileHash(p.Project, p.Instance, p.Path, "")
+			if exists, ok := fileExistsCache.Get(fileHash); ok {
+				return exists.(bool)
+			}
+		}
+
+		cmd := fmt.Sprintf(`sh -c "command -v %s"`, p.Path)
+		ie := c.NewInstanceExec(InstanceExec{
+			Instance: p.Instance,
+			Cmd:      cmd,
+		})
+		ret, _ := ie.Exec()
+
+		if ret != 0 {
+			return false
+		}
+
+		if p.ShouldCache {
+			fileExistsCache.SetDefault(fileHash, true)
+		}
+
+		return true
+	}, params)
+}
+
 type InstanceFile struct {
 	Project  string
 	Instance string

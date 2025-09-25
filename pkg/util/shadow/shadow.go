@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"ssh2incus/pkg/yescrypt"
+
 	"github.com/GehirnInc/crypt"
 	_ "github.com/GehirnInc/crypt/sha256_crypt"
 	_ "github.com/GehirnInc/crypt/sha512_crypt"
@@ -34,6 +36,17 @@ func New() *Shadow {
 	}
 }
 
+func NewFromString(shadowContent string) (*Shadow, error) {
+	e, err := Read(shadowContent)
+	if err != nil {
+		return nil, err
+	}
+	return &Shadow{
+		shadowFile: ShadowFile,
+		entries:    e,
+	}, nil
+}
+
 func (s *Shadow) Read() error {
 	var err error
 	s.entries, err = Read(s.shadowFile)
@@ -49,7 +62,7 @@ func (s *Shadow) ReadFile(shadowFile string) error {
 
 func (s *Shadow) Lookup(name string) (*Entry, error) {
 	for _, entry := range s.entries {
-		if entry.Name == name {
+		if entry.Username == name {
 			return &entry, nil
 		}
 	}
@@ -59,7 +72,7 @@ func (s *Shadow) Lookup(name string) (*Entry, error) {
 
 type Entry struct {
 	// User login name.
-	Name string
+	Username string
 
 	// Hashed user password.
 	Pass string
@@ -121,10 +134,17 @@ func (e *Entry) IsPasswordValid() bool {
 func (e *Entry) VerifyPassword(pass string) (err error) {
 	// Do not permit null and locked passwords.
 	if e.Pass == "" {
-		return errors.New("verify: null password")
+		return errors.New("shadow: null password")
+	}
+	if e.Pass[0] == '*' {
+		return errors.New("shadow: password auth disabled")
 	}
 	if e.Pass[0] == '!' {
-		return errors.New("verify: locked password")
+		return errors.New("shadow: locked password")
+	}
+
+	if len(e.Pass) < 2 {
+		return errors.New("shadow: password not set")
 	}
 
 	// crypt.NewFromHash may panic on unknown hash function.
@@ -134,6 +154,10 @@ func (e *Entry) VerifyPassword(pass string) (err error) {
 		}
 	}()
 
+	if e.Pass[1] == 'y' {
+		return VerifyYescrypt(pass, e.Pass)
+	}
+
 	if err := crypt.NewFromHash(e.Pass).Verify(e.Pass, []byte(pass)); err != nil {
 		if errors.Is(err, crypt.ErrKeyMismatch) {
 			return ErrWrongPassword
@@ -141,6 +165,18 @@ func (e *Entry) VerifyPassword(pass string) (err error) {
 		return err
 	}
 	return nil
+}
+
+func VerifyYescrypt(pass, hash string) (err error) {
+	hashed, err := yescrypt.Hash([]byte(pass), []byte(hash))
+	if err != nil {
+		return err
+	}
+
+	if hash == string(hashed) {
+		return nil
+	}
+	return ErrWrongPassword
 }
 
 // Read reads system shadow passwords database and returns all entires in it.
@@ -173,8 +209,8 @@ func parseEntry(line string) (*Entry, error) {
 	}
 
 	res := &Entry{
-		Name: parts[0],
-		Pass: parts[1],
+		Username: parts[0],
+		Pass:     parts[1],
 	}
 
 	for i, value := range [...]*int{
@@ -206,7 +242,7 @@ func LookupFile(name, shadowFile string) (*Entry, error) {
 	}
 
 	for _, entry := range entries {
-		if entry.Name == name {
+		if entry.Username == name {
 			return &entry, nil
 		}
 	}

@@ -295,17 +295,17 @@ func handoffToChild(conn net.Conn) {
 }
 
 func setupServer() *ssh.Server {
-	var authHandler ssh.PublicKeyHandler
+	var publickeyHandler ssh.PublicKeyHandler
 
 	switch {
 	case config.InAuth:
-		authHandler = inAuthHandler
+		publickeyHandler = inAuthHandler
 		break
 	case config.NoAuth:
-		authHandler = noAuthHandler
+		publickeyHandler = noAuthHandler
 		break
 	default:
-		authHandler = hostAuthHandler
+		publickeyHandler = hostAuthHandler
 	}
 
 	if !config.NoAuth && len(config.AllowedGroups) > 0 {
@@ -330,11 +330,10 @@ func setupServer() *ssh.Server {
 	forwardHandler := new(ForwardTCPHandler)
 
 	server := &ssh.Server{
-		Addr:             config.Listen,
-		IdleTimeout:      config.IdleTimeout,
-		Version:          "Incus",
-		PublicKeyHandler: authHandler,
-		Handler:          shellHandler,
+		Addr:        config.Listen,
+		IdleTimeout: config.IdleTimeout,
+		Version:     "Incus",
+		Handler:     shellHandler,
 		ChannelHandlers: map[string]ssh.ChannelHandler{
 			sessionChannel:     ssh.DefaultSessionHandler,
 			directTCPIPChannel: directTCPIPStdioHandler,
@@ -349,6 +348,17 @@ func setupServer() *ssh.Server {
 		},
 		ReversePortForwardingCallback: reversePortForwardingCallback,
 		HostSigners:                   hostSigners,
+	}
+
+	if len(config.AuthMethods) > 0 {
+		server.AuthMethods = config.AuthMethods
+		server.PasswordHandler = passwordHandler
+	}
+
+	server.PublicKeyHandler = publickeyHandler
+
+	if config.PassAuth && !config.NoAuth {
+		server.PasswordHandler = passwordHandler
 	}
 
 	if config.Banner {

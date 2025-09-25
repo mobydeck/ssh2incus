@@ -2,7 +2,7 @@ package server
 
 import (
 	"ssh2incus/pkg/ssh"
-	"ssh2incus/pkg/user"
+	"ssh2incus/pkg/util/shadow"
 
 	log "github.com/sirupsen/logrus"
 	gossh "golang.org/x/crypto/ssh"
@@ -15,75 +15,32 @@ func hostAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 
 	log.Debugf("auth (host): attempting key auth for %s: %s %s", lu, key.Type(), gossh.FingerprintSHA256(key))
 
-	osUser, err := getOsUser(lu.User)
+	hostUser, err := checkHostUser(lu)
+	if err != nil {
+		log.Errorf("auth (host): %v", err)
+		return false
+	}
+
+	keys, err := getUserAuthKeys(hostUser)
 	if err != nil {
 		log.Errorf("auth (host): %s", err)
 		return false
 	}
 
-	if osUser.Uid != "0" && len(config.AllowedGroups) > 0 {
-		userGroups, err := getUserGroups(osUser)
-		if err != nil {
-			log.Errorf("auth (host): %s", err)
-			return false
-		}
-
-		if gid, match := groupMatch(config.AllowedGroups, userGroups); !match {
-			log.Warnf("auth (host): no group match for %s %v in %v", lu.User, userGroups, config.AllowedGroups)
-			return false
-		} else {
-			group, err := user.LookupGroupId(gid)
-			if err != nil {
-				log.Errorf("auth (host): %s", err)
-			}
-			log.Debugf("auth (host): host user %q matched %q group", lu.User, group.Name)
-		}
-	}
-
-	keys, err := getUserAuthKeys(osUser)
-	if err != nil {
-		log.Errorf("auth (host): %s", err)
-		return false
-	}
-
-	if len(keys) == 0 {
-		log.Warnf("auth (host): no keys for %s", lu)
-		return false
-	}
-
-	for _, k := range keys {
-		equal, err := keysEqual(key, k)
-		if err != nil {
-			log.Errorf("auth (instance): failed to compare keys for %s: %s", lu, err)
-		}
-		if equal {
-			log.Infof("auth (host): succeeded for %s: %s %s", lu, key.Type(), gossh.FingerprintSHA256(key))
-			if !lu.IsValid() {
-				return false
-			}
-			lu.PublicKey = key
-			return true
-		}
-	}
-
-	log.Warnf("auth (host): failed for %s: %s %s", lu, key.Type(), gossh.FingerprintSHA256(key))
-	return false
+	return authKeyCheck(ctx, key, lu, keys, "host")
 }
 
 // inAuthHandler performs host auth and instance auth
 func inAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 	log := log.WithField("session", ctx.ShortSessionID())
-
 	lu := LoginUserFromContext(ctx)
 
 	// valid user on the host should be allowed
-	valid := hostAuthHandler(ctx, key)
-	if valid {
+	if hostAuthHandler(ctx, key) {
 		return true
-	} else {
-		if !lu.IsValid() {
-			return false
-		}
+	}
+	if !lu.IsValid() {
+		return false
 	}
 
 	// commands are allowed for host users only
@@ -95,7 +52,96 @@ func inAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 
 	client, err := NewDefaultIncusClientWithContext(ctx)
 	if err != nil {
-		log.Error(err)
+		log.Errorf("auth (instance): %s", err)
+		return false
+	}
+
+	iu, err := client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+	if err != nil {
+		log.Errorf("auth (instance): failed to get instance user %s for %s: %s", lu.InstanceUser, lu, err)
+		return false
+	}
+	if iu == nil {
+		log.Errorf("auth (instance): not found instance user for %s", lu)
+		return false
+	}
+
+	path := iu.Dir + "/.ssh/authorized_keys"
+	file, err := client.DownloadFile(iu.Project, iu.Instance, path)
+	if err != nil {
+		log.Warnf("auth (instance): failed to download %s for %s: %s", path, lu, err)
+		return false
+	}
+
+	keys := file.Content.Lines()
+
+	return authKeyCheck(ctx, key, lu, keys, "instance")
+}
+
+// authKeyCheck centralises key‑authentication logic.
+func authKeyCheck(ctx ssh.Context, key ssh.PublicKey, lu *LoginUser, keys [][]byte, authDesc string) bool {
+	log := log.WithField("session", ctx.ShortSessionID())
+
+	//log.Debugf("auth (%s): attempting key auth for %s: %s %s", authDesc, lu, key.Type(), gossh.FingerprintSHA256(key))
+
+	if len(keys) == 0 {
+		log.Warnf("auth (%s): no keys for %s", authDesc, lu)
+		return false
+	}
+
+	for _, k := range keys {
+		equal, err := keysEqual(key, k)
+		if err != nil {
+			log.Errorf("auth (%s): failed to compare keys for %s: %s", authDesc, lu, err)
+			continue
+		}
+		if equal {
+			log.Infof("auth (%s): key check succeeded for %s: %s %s", authDesc, lu, key.Type(), gossh.FingerprintSHA256(key))
+			if !lu.IsValid() {
+				return false
+			}
+			lu.PublicKey = key
+			return true
+		}
+	}
+
+	log.Warnf("auth (%s): failed for %s: %s %s", authDesc, lu, key.Type(), gossh.FingerprintSHA256(key))
+	return false
+}
+
+func passwordHandler(ctx ssh.Context, password string) bool {
+	log := log.WithField("session", ctx.ShortSessionID())
+
+	lu := LoginUserFromContext(ctx)
+
+	log.Debugf("auth (host): attempting password auth for %s", lu)
+
+	hostUser, err := checkHostUser(lu)
+	if err != nil {
+		log.Errorf("auth (host): %v", err)
+		return false
+	}
+
+	err = checkHostShadowPassword(hostUser.Username, password)
+	if err != nil {
+		log.Errorf("auth (host): user %q: %v", hostUser.Username, err)
+		if !config.InAuth {
+			return false
+		}
+	} else {
+		log.Infof("auth (host): password check succeeded for %s", lu)
+		return true
+	}
+
+	log.Debugf("auth (instance): attempting password auth for %s", lu)
+
+	if !lu.IsValid() {
+		return false
+	}
+
+	client, err := NewDefaultIncusClientWithContext(ctx)
+	if err != nil {
+		log.Errorf("failed to initialize incus client for %s: %v", lu, err)
 		return false
 	}
 
@@ -111,34 +157,21 @@ func inAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 		return false
 	}
 
-	path := iu.Dir + "/.ssh/authorized_keys"
-	file, err := client.DownloadFile(iu.Project, iu.Instance, path)
+	file, err := client.DownloadFile(iu.Project, iu.Instance, shadow.ShadowFile)
 	if err != nil {
-		log.Warnf("auth (instance): failed to download %s for %s: %s", path, lu, err)
+		log.Errorf("auth (instance): failed to download shadow file: %s", err)
 		return false
 	}
 
-	keys := file.Content.Lines()
-
-	if len(keys) == 0 {
-		log.Warnf("auth (instance): no keys for %s", lu)
+	shadowFile := string(file.Content.Bytes())
+	err = checkShadowPassword(lu.InstanceUser, password, shadowFile)
+	if err != nil {
+		log.Errorf("auth (instance): failed to verify password: %s", err)
 		return false
 	}
 
-	for _, k := range keys {
-		equal, err := keysEqual(key, k)
-		if err != nil {
-			log.Errorf("auth (instance): failed to compare keys for %s: %s", lu, err)
-		}
-		if equal {
-			log.Infof("auth (instance): succeeded for %s: %s %s", lu, key.Type(), gossh.FingerprintSHA256(key))
-			lu.PublicKey = key
-			return true
-		}
-	}
-
-	log.Warnf("auth (instance): failed for %s: %s %s", lu, key.Type(), gossh.FingerprintSHA256(key))
-	return false
+	log.Infof("auth (instance): password check succeeded for %s", lu)
+	return true
 }
 
 func noAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {

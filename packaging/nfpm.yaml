@@ -8,30 +8,34 @@ section: default
 priority: "extra"
 maintainer: "<mobydeck@users.noreply.github.com>"
 description: |
-  SSH server for Incus instances
+    SSH server for Incus instances
 vendor: mobydeck
 homepage: https://ssh2incus.com
 license: GPL-3.0
 
 provides:
-  - ssh2incus
+    - ssh2incus
 
 contents:
-  - src: ./build/ssh2incus
-    dst: /bin/ssh2incus
+    - src: ./build/ssh2incus
+      dst: /bin/ssh2incus
 
-  - src: ./packaging/ssh2incus.env
-    dst: /etc/default/ssh2incus
-    type: config|noreplace
+    - src: ./packaging/ssh2incus.env
+      dst: /etc/default/ssh2incus
+      type: config|noreplace
 
-  - src: ./packaging/ssh2incus.service
-    dst: /lib/systemd/system/ssh2incus.service
+    - src: ./packaging/create-config.yaml
+      dst: /etc/ssh2incus/create-config.yaml
+      type: config|noreplace
 
-  - src: ./README.md
-    dst: /usr/share/doc/ssh2incus/README.md
+    - src: ./packaging/ssh2incus.service
+      dst: /lib/systemd/system/ssh2incus.service
 
-  - src: ./LICENSE
-    dst: /usr/share/licenses/ssh2incus/LICENSE
+    - src: ./README.md
+      dst: /usr/share/doc/ssh2incus/README.md
+
+    - src: ./LICENSE
+      dst: /usr/share/licenses/ssh2incus/LICENSE
 
 scripts:
-  postinstall: ./packaging/post-install.sh
+    postinstall: ./packaging/post-install.sh

@@ -2,8 +2,9 @@ package shadow_test
 
 import (
 	"fmt"
-	"ssh2incus/pkg/util/shadow"
 	"testing"
+
+	"ssh2incus/pkg/util/shadow"
 
 	"github.com/stretchr/testify/assert"
 )
