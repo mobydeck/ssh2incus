@@ -156,7 +156,7 @@ release: package
             echo "Please set GH_TOKEN environment variable or create .netrc with GitHub credentials."; \
             exit 1; \
         fi; \
-        GITHUB_TOKEN=$(grep "machine github.com" ~/.netrc | grep "password" | awk '{print $6}') && \
+        GITHUB_TOKEN=$(grep "machine github.com" ~/.netrc | grep "password" | awk '{print $6}' | head -1) && \
         if [ -z "$GITHUB_TOKEN" ]; then \
             echo "Error: GitHub token not found in .netrc file."; \
             echo "Please ensure your .netrc contains a 'machine github.com' entry with a password or set GH_TOKEN."; \
