@@ -1,0 +1,23 @@
+# image for new instance
+image: alpine/edge
+# create ephemeral instance
+ephemeral: false
+# size in GiB, 0 for unlimited
+memory: 1
+# number of CPUs, 0 for unlimited
+cpu: 1
+# create VM
+vm: false
+
+# instance devices
+#devices:
+#  root:
+#    size: 10 # size in GiB
+
+# instance configs
+config:
+    security.privileged: false
+    # The next 3 flags are used to allow running Docker containers
+    security.nested: false
+    security.syscalls.intercept.mknod: false
+    security.syscalls.intercept.setxattr: false
