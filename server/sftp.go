@@ -10,7 +10,7 @@ import (
 	"ssh2incus/pkg/incus"
 	"ssh2incus/pkg/ssh"
 	"ssh2incus/pkg/util"
-	"ssh2incus/server/sftp-server-binary"
+	sftp_server_binary "ssh2incus/server/sftp-server-binary"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -112,17 +112,21 @@ func sftpSubsystemHandler(s ssh.Session) {
 
 	uid := 0
 	gid := 0
-	chroot := "/"
 	home := iu.Dir
-	if iu.Uid != 0 {
-		chroot = iu.Dir
-		home = "/"
-	}
+	startDir := home
 
-	cmd := fmt.Sprintf("%s -e -d %s", sftp_server_binary.BinName(), chroot)
+	cmd := fmt.Sprintf("%s -e", sftp_server_binary.BinName())
+	if config.ChrootSFTP && iu.Uid != 0 {
+		home = "/"
+		cmd += " -c"
+	}
+	cmd += fmt.Sprintf(" -d %s", startDir)
 
 	env := make(map[string]string)
 	env["USER"] = iu.User
+	//if iu.Group != "" {
+	//	env["GROUP"] = iu.Group
+	//}
 	env["UID"] = fmt.Sprintf("%d", iu.Uid)
 	env["GID"] = fmt.Sprintf("%d", iu.Gid)
 	env["HOME"] = home

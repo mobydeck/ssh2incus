@@ -18,6 +18,7 @@ func main() {
 	var (
 		help        bool
 		readOnly    bool
+		chroot      bool
 		debugStderr bool
 		debugLevel  string
 		startDir    string
@@ -26,8 +27,9 @@ func main() {
 	)
 
 	flag.BoolVar(&readOnly, "R", readOnly, "read-only server")
+	flag.BoolVar(&chroot, "c", chroot, "chroot to start directory")
 	flag.BoolVar(&debugStderr, "e", debugStderr, "debug to stderr")
-	flag.StringVar(&startDir, "d", startDir, "change root directory")
+	flag.StringVar(&startDir, "d", startDir, "start directory")
 	flag.IntVar(&umask, "u", umask, "explicit umask")
 	flag.StringVar(&debugLevel, "l", debugLevel, "debug level (ignored)")
 	flag.BoolVar(&help, "h", help, "print help")
@@ -42,8 +44,10 @@ func main() {
 		stderr = os.Stderr
 	}
 
-	if err := syscall.Chroot(startDir); err != nil {
-		exit(err)
+	if chroot {
+		if err := syscall.Chroot(startDir); err != nil {
+			exit(err)
+		}
 	}
 
 	home, ok := os.LookupEnv("HOME")
@@ -61,7 +65,15 @@ func main() {
 		exit(errors.New("UID environment variable not set"))
 	}
 
-	if err = syscall.Chdir(home); err != nil {
+	chdir := home
+	if !chroot {
+		if startDir != "" {
+			chdir = startDir
+		}
+	} else {
+		chdir = "/"
+	}
+	if err = syscall.Chdir(chdir); err != nil {
 		exit(err)
 	}
 

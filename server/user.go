@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	PersistentSessionFlag = "/"
+	PersistentSessionFlag = "%"
 	EphemeralInstanceFlag = "~"
 	CreateInstanceFlag    = "+"
+	CommandShellFlag      = "/"
 )
 
 var (
@@ -56,19 +57,21 @@ type LoginUser struct {
 type LoginCreateConfig struct {
 	Image      *string
 	Memory     *int
-	Cpu        *int
+	CPU        *int
 	Disk       *int
 	Ephemeral  *bool
 	Nesting    *bool
 	Privileged *bool
-	Vm         *bool
+	VM         *bool
+	Profiles   []string
 }
 
 func LoginUserFromContext(ctx ssh.Context) *LoginUser {
 	if lu, ok := ctx.Value(ContextKeyLoginUser).(*LoginUser); ok {
 		return lu
 	}
-	lu := parseLoginUser(ctx.User())
+	lu := &LoginUser{}
+	lu.ParseFrom(ctx.User())
 	lu.ctx = ctx
 	if lu.Remote == "" {
 		lu.Remote = config.Remote
@@ -96,11 +99,16 @@ func (lu *LoginUser) String() string {
 		if lu.CreateConfig.Image != nil {
 			cc = append(cc, *lu.CreateConfig.Image)
 		}
+		if len(lu.CreateConfig.Profiles) > 0 {
+			for _, p := range lu.CreateConfig.Profiles {
+				cc = append(cc, fmt.Sprintf("%%%s", p))
+			}
+		}
 		if lu.CreateConfig.Memory != nil {
 			cc = append(cc, fmt.Sprintf("m%d", *lu.CreateConfig.Memory))
 		}
-		if lu.CreateConfig.Cpu != nil {
-			cc = append(cc, fmt.Sprintf("c%d", *lu.CreateConfig.Cpu))
+		if lu.CreateConfig.CPU != nil {
+			cc = append(cc, fmt.Sprintf("c%d", *lu.CreateConfig.CPU))
 		}
 		if lu.CreateConfig.Disk != nil {
 			cc = append(cc, fmt.Sprintf("d%d", *lu.CreateConfig.Disk))
@@ -112,7 +120,7 @@ func (lu *LoginUser) String() string {
 		if lu.CreateConfig.Privileged != nil && *lu.CreateConfig.Privileged {
 			conf = append(conf, "priv")
 		}
-		if lu.CreateConfig.Vm != nil && *lu.CreateConfig.Vm {
+		if lu.CreateConfig.VM != nil && *lu.CreateConfig.VM {
 			conf = append(conf, "vm")
 		}
 		options := ""
@@ -303,88 +311,104 @@ func getUserGroups(u *user.User) ([]string, error) {
 	return groups, nil
 }
 
-func parseLoginUser(user string) *LoginUser {
-	lu := new(LoginUser)
+// ParseFrom parses a user string into the LoginUser struct
+func (lu *LoginUser) ParseFrom(user string) {
+	lu.setDefaults()
 	lu.OrigUser = user
-	lu.InstanceUser = "root"
-	lu.Project = "default"
 
-	if user != "" && (user[0] == CreateInstanceFlag[0] || user[0] == EphemeralInstanceFlag[0]) {
-		conf := user[1:]
-		lu.User = "root"
-		lu.CreateInstance = true
-		lu.CreateConfig = LoginCreateConfig{}
-		if user[0] == '~' {
-			lu.CreateConfig.Ephemeral = gu.Ptr(true)
-		}
-
-		instance, conf, _ := strings.Cut(conf, "+")
-		if r, i, ok := strings.Cut(instance, ":"); ok {
-			lu.Remote = r
-			instance = i
-		}
-		if i, p, ok := strings.Cut(instance, "."); ok {
-			lu.Instance = i
-			lu.Project = p
-		} else {
-			lu.Instance = instance
-		}
-
-		configs := strings.Split(conf, "+")
-		for _, c := range configs {
-			switch {
-			case len(c) == 0:
-				continue
-			case strings.Contains(c, "/"):
-				lu.CreateConfig.Image = &c
-			case c[0] == 'm':
-				if n, err := strconv.Atoi(c[1:]); err == nil {
-					lu.CreateConfig.Memory = &n
-				}
-			case c[0] == 'c':
-				if n, err := strconv.Atoi(c[1:]); err == nil {
-					lu.CreateConfig.Cpu = &n
-				}
-			case c[0] == 'd':
-				if n, err := strconv.Atoi(c[1:]); err == nil {
-					lu.CreateConfig.Disk = &n
-				}
-			case c == "n" || strings.HasPrefix(c, "nest"):
-				lu.CreateConfig.Nesting = gu.Ptr(true)
-			case c == "p" || strings.HasPrefix(c, "priv"):
-				lu.CreateConfig.Privileged = gu.Ptr(true)
-			case c == "e" || strings.HasPrefix(c, "ephe"):
-				lu.CreateConfig.Ephemeral = gu.Ptr(true)
-			case c == "v" || c == "vm":
-				lu.CreateConfig.Vm = gu.Ptr(true)
-			}
-		}
-		return lu
+	if lu.isCreationFormat(user) {
+		lu.parseCreationFormat(user)
+		return
 	}
 
+	lu.parseRegularFormat(user)
+}
+
+// setDefaults initializes the LoginUser with default values
+func (lu *LoginUser) setDefaults() {
+	lu.InstanceUser = "root"
+	lu.Project = "default"
+	lu.User = "root"
+}
+
+// isCreationFormat checks if the user string is in creation format (starts with + or ~)
+func (lu *LoginUser) isCreationFormat(user string) bool {
+	return user != "" && (string(user[0]) == CreateInstanceFlag || string(user[0]) == EphemeralInstanceFlag)
+}
+
+// parseCreationFormat parses creation format: [+|~][remote:]instance-name[.project-name][+image][+memory][+cpu][+disk][+options][~host-user]
+func (lu *LoginUser) parseCreationFormat(user string) {
+	conf := user[1:]
+	lu.CreateInstance = true
+	lu.CreateConfig = LoginCreateConfig{}
+
+	if string(user[0]) == EphemeralInstanceFlag {
+		lu.CreateConfig.Ephemeral = gu.Ptr(true)
+	}
+
+	// Parse host user
+	if c, u, ok := strings.Cut(conf, "~"); ok {
+		conf = c
+		lu.User = u
+	}
+
+	instance, configStr, _ := strings.Cut(conf, "+")
+	lu.parseRemoteAndInstance(instance)
+	lu.parseCreateConfig(configStr)
+}
+
+// parseRegularFormat parses regular format: [%][remote:][instance-user@]instance-name[.project-name][[~|+]host-user]
+func (lu *LoginUser) parseRegularFormat(user string) {
+	// Handle commands
+	if cmd, ok := strings.CutPrefix(user, CommandShellFlag); ok {
+		lu.Command = cmd
+		lu.Instance = ""
+		lu.Project = ""
+		lu.InstanceUser = ""
+		return
+	}
+
+	// Handle persistent session flag
 	if u, ok := strings.CutPrefix(user, PersistentSessionFlag); ok {
 		user = u
 		lu.Persistent = true
 	}
 
-	if r, u, ok := strings.Cut(user, ":"); ok {
-		lu.Remote = r
-		user = u
-	}
-
+	// Parse instance and host user
 	instance := user
-	if i, u, ok := strings.Cut(user, "+"); ok {
+	if i, u, ok := strings.Cut(user, "~"); ok {
 		instance = i
 		lu.User = u
-	} else {
-		lu.User = "root"
+	} else if i, u, ok := strings.Cut(user, "+"); ok {
+		instance = i
+		lu.User = u
 	}
 
+	// Parse remote and instance
+	lu.parseRemoteAndInstance(instance)
+}
+
+// parseRemoteAndInstance parses remote:instance.project format
+func (lu *LoginUser) parseRemoteAndInstance(instance string) {
+	if r, i, ok := strings.Cut(instance, ":"); ok {
+		lu.Remote = r
+		instance = i
+	}
+	lu.parseInstanceAndUser(instance)
+}
+
+// parseInstanceAndUser parses user@instance format
+func (lu *LoginUser) parseInstanceAndUser(instance string) {
+	// Parse instance user and instance name
 	if u, i, ok := strings.Cut(instance, "@"); ok {
 		instance = i
 		lu.InstanceUser = u
 	}
+	lu.parseInstanceAndProject(instance)
+}
 
+// parseInstanceAndProject parses instance.project format
+func (lu *LoginUser) parseInstanceAndProject(instance string) {
 	if i, p, ok := strings.Cut(instance, "."); ok {
 		lu.Instance = i
 		lu.Project = p
@@ -395,14 +419,53 @@ func parseLoginUser(user string) *LoginUser {
 	if lu.Project == "" {
 		lu.Project = "default"
 	}
+}
 
-	if strings.HasPrefix(lu.Instance, "%") {
-		lu.Command = strings.TrimPrefix(lu.Instance, "%")
-		lu.Instance = ""
-		lu.Project = ""
-		lu.InstanceUser = ""
+// parseCreateConfig parses the creation configuration options
+func (lu *LoginUser) parseCreateConfig(configStr string) {
+	if configStr == "" {
+		return
 	}
 
+	configs := strings.Split(configStr, "+")
+	for _, c := range configs {
+		switch {
+		case len(c) == 0:
+			continue
+		case strings.HasPrefix(c, "%"):
+			c = strings.TrimPrefix(c, "%")
+			pp := strings.Split(c, ",")
+			lu.CreateConfig.Profiles = append(lu.CreateConfig.Profiles, pp...)
+		case strings.Contains(c, "/"):
+			lu.CreateConfig.Image = &c
+		case c[0] == 'm':
+			if n, err := strconv.Atoi(c[1:]); err == nil {
+				lu.CreateConfig.Memory = &n
+			}
+		case c[0] == 'c':
+			if n, err := strconv.Atoi(c[1:]); err == nil {
+				lu.CreateConfig.CPU = &n
+			}
+		case c[0] == 'd':
+			if n, err := strconv.Atoi(c[1:]); err == nil {
+				lu.CreateConfig.Disk = &n
+			}
+		case c == "n" || strings.HasPrefix(c, "nest"):
+			lu.CreateConfig.Nesting = gu.Ptr(true)
+		case c == "p" || strings.HasPrefix(c, "priv"):
+			lu.CreateConfig.Privileged = gu.Ptr(true)
+		case c == "e" || strings.HasPrefix(c, "ephe"):
+			lu.CreateConfig.Ephemeral = gu.Ptr(true)
+		case c == "v" || c == "vm":
+			lu.CreateConfig.VM = gu.Ptr(true)
+		}
+	}
+}
+
+// parseLoginUser is kept for backward compatibility but now uses the new ParseFrom method
+func parseLoginUser(user string) *LoginUser {
+	lu := &LoginUser{}
+	lu.ParseFrom(user)
 	return lu
 }
 

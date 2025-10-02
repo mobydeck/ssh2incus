@@ -35,12 +35,12 @@ type CreateInstanceParams struct {
 	Project    string                       `json:"project,omitempty"`
 	Image      string                       `json:"image,omitempty"`
 	Memory     int                          `json:"memory,omitempty"`
-	Cpu        int                          `json:"cpu,omitempty"`
+	CPU        int                          `json:"cpu,omitempty"`
 	Disk       int                          `json:"disk,omitempty"`
 	Ephemeral  bool                         `json:"ephemeral,omitempty"`
 	Nesting    bool                         `json:"nesting,omitempty"`
 	Privileged bool                         `json:"privileged,omitempty"`
-	Vm         bool                         `json:"vm,omitempty"`
+	VM         bool                         `json:"vm,omitempty"`
 	Config     map[string]string            `json:"config,omitempty"`
 	Devices    map[string]map[string]string `json:"devices,omitempty"`
 }
@@ -62,12 +62,12 @@ func (c *Client) CreateInstance(params CreateInstanceParams) (*api.Instance, err
 	}
 
 	typ := api.InstanceTypeContainer
-	if params.Vm {
+	if params.VM {
 		typ = api.InstanceTypeVM
 	}
 
-	config := make(map[string]string)
-	if !params.Vm {
+	config := params.Config
+	if !params.VM {
 		if params.Privileged {
 			config["security.privileged"] = "true"
 		}
@@ -82,8 +82,8 @@ func (c *Client) CreateInstance(params CreateInstanceParams) (*api.Instance, err
 		config["limits.memory"] = fmt.Sprintf("%dGiB", params.Memory)
 	}
 
-	if params.Cpu > 0 {
-		config["limits.cpu"] = fmt.Sprintf("%d", params.Cpu)
+	if params.CPU > 0 {
+		config["limits.cpu"] = fmt.Sprintf("%d", params.CPU)
 	}
 
 	devices := mergeDevices(profile.Devices, params.Devices)
@@ -281,6 +281,22 @@ func (c *Client) DeleteInstanceDevice(i *api.Instance, name string) error {
 	}
 
 	return nil
+}
+
+func mergeConfig(c1, c2 map[string]string) map[string]string {
+	result := make(map[string]string)
+
+	// Copy all entries from c1
+	for k, v := range c1 {
+		result[k] = v
+	}
+
+	// Merge entries from c2
+	for k, v := range c2 {
+		result[k] = v
+	}
+
+	return result
 }
 
 func mergeDevices(d1, d2 map[string]map[string]string) map[string]map[string]string {

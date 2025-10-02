@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	"ssh2incus/pkg/cron"
 	"ssh2incus/pkg/ssh"
 
 	log "github.com/sirupsen/logrus"
 	gossh "golang.org/x/crypto/ssh"
-	"gopkg.in/robfig/cron.v2"
 )
 
 const sessionChannel = "session"
@@ -298,8 +298,8 @@ func setupServer() *ssh.Server {
 	var publickeyHandler ssh.PublicKeyHandler
 
 	switch {
-	case config.InAuth:
-		publickeyHandler = inAuthHandler
+	case config.InstanceAuth:
+		publickeyHandler = instanceAuthHandler
 		break
 	case config.NoAuth:
 		publickeyHandler = noAuthHandler

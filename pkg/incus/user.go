@@ -30,11 +30,12 @@ type InstanceUser struct {
 	Project  string
 	Instance string
 	User     string
-	Uid      int
-	Gid      int
-	Dir      string
-	Shell    string
-	Ent      string
+	// Group    string
+	Uid   int
+	Gid   int
+	Dir   string
+	Shell string
+	Ent   string
 }
 
 func (i *InstanceUser) Welcome() string {
@@ -83,15 +84,49 @@ func (c *Client) GetInstanceUser(project, instance, user string) (*InstanceUser,
 		gid, _ := strconv.Atoi(ent[3])
 		dir := ent[5]
 		shell := ent[6]
+
+		// get group name
+		// group := ""
+		// func() (any, error) {
+		// 	stdout := buffer.NewOutputBuffer()
+		// 	stderr := buffer.NewOutputBuffer()
+		// 	cmd := fmt.Sprintf("getent group %d", gid)
+
+		// 	ie := c.NewInstanceExec(InstanceExec{
+		// 		Instance: instance,
+		// 		Cmd:      cmd,
+		// 		Stdout:   stdout,
+		// 		Stderr:   stderr,
+		// 	})
+
+		// 	ret, err := ie.Exec()
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// 	if ret != 0 {
+		// 		return nil, errors.New("group not found")
+		// 	}
+
+		// 	out := stdout.Lines()
+
+		// 	if len(out) < 1 {
+		// 		return nil, errors.New("group not found")
+		// 	}
+		// 	ent := strings.Split(out[0], ":")
+		// 	group = ent[0]
+		// 	return nil, nil
+		// }()
+
 		iu := &InstanceUser{
 			Instance: instance,
 			Project:  project,
 			User:     user,
-			Uid:      uid,
-			Gid:      gid,
-			Dir:      dir,
-			Shell:    shell,
-			Ent:      out[0],
+			// Group:    group,
+			Uid:   uid,
+			Gid:   gid,
+			Dir:   dir,
+			Shell: shell,
+			Ent:   out[0],
 		}
 		return iu, nil
 	}, instance)

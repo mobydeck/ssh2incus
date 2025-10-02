@@ -17,25 +17,55 @@ provides:
     - ssh2incus
 
 contents:
-    - src: ./build/ssh2incus
-      dst: /bin/ssh2incus
+    - src: ./build/${name}
+      dst: /usr/bin/${name}
+      expand: true
 
-    - src: ./packaging/ssh2incus.env
-      dst: /etc/default/ssh2incus
+    - src: ./packaging/${name}.env
+      dst: /etc/default/${name}
       type: config|noreplace
+      expand: true
+
+    - src: ./packaging/config.yaml
+      dst: /etc/${name}/config.yaml
+      type: config|noreplace
+      expand: true
 
     - src: ./packaging/create-config.yaml
-      dst: /etc/ssh2incus/create-config.yaml
+      dst: /etc/${name}/create-config.yaml
       type: config|noreplace
+      expand: true
 
-    - src: ./packaging/ssh2incus.service
-      dst: /lib/systemd/system/ssh2incus.service
+    - src: ./packaging/web-server-init.example.yaml
+      dst: /etc/${name}/web-server-init.example.yaml
+      type: config
+      expand: true
+
+    - src: ./packaging/banner.txt.example
+      dst: /etc/${name}/banner.txt.example
+      type: config
+      expand: true
+
+    - src: ./packaging/welcome.txt.example
+      dst: /etc/${name}/welcome.txt.example
+      type: config
+      expand: true
+
+    - src: ./packaging/${name}.service
+      dst: /usr/lib/systemd/system/${name}.service
+      expand: true
 
     - src: ./README.md
-      dst: /usr/share/doc/ssh2incus/README.md
+      dst: /usr/share/doc/${name}/README.md
+      expand: true
+
+    - src: ./README.md
+      dst: /usr/share/doc/${name}/CHANGELOG.md
+      expand: true
 
     - src: ./LICENSE
-      dst: /usr/share/licenses/ssh2incus/LICENSE
+      dst: /usr/share/licenses/${name}/LICENSE
+      expand: true
 
 scripts:
     postinstall: ./packaging/post-install.sh

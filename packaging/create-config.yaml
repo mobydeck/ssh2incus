@@ -1,25 +1,33 @@
-# version of this instance template
-version: 1
-# image for new instance
-image: alpine/edge
-# create ephemeral instance
-ephemeral: false
-# size in GiB, 0 for unlimited
-memory: 1
-# number of CPUs, 0 for unlimited
-cpu: 1
-# root disk size in GiB, 0 for unlimited
-disk: 10
-# create VM instance
-vm: false
+defaults:
+    # image for new instance
+    image: alpine/edge
+    # create ephemeral instance
+    ephemeral: false
+    # size in GiB, 0 for unlimited
+    memory: 1
+    # number of CPUs, 0 for unlimited
+    cpu: 1
+    # root disk size in GiB, 0 for unlimited
+    disk: 10
+    # create VM instance
+    vm: false
 
-# instance devices
-devices: {}
+    # instance devices
+    devices: {}
 
-# instance configs
-config:
-    security.privileged: false
-    # The next 3 flags are used to allow running Docker containers
-    security.nested: false
-    security.syscalls.intercept.mknod: false
-    security.syscalls.intercept.setxattr: false
+    # instance configs
+    config:
+        security.privileged: false
+        # The next 3 flags are used to allow running Docker containers
+        security.nesting: false
+        security.syscalls.intercept.mknod: false
+        security.syscalls.intercept.setxattr: false
+
+profiles:
+    web-server-example:
+        image: ubuntu/22.04/cloud
+        memory: 2
+        cpu: 2
+        disk: 20
+        config:
+            cloud-init.user-data: <@web-server-init.example.yaml

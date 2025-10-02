@@ -131,8 +131,8 @@ func getIncusConnectParams() (*incus.ConnectParams, error) {
 			if _, err := os.Stat(keyFile); err != nil {
 				return nil, fmt.Errorf("client key not found at %s: %w", keyFile, err)
 			}
-		} else if strings.HasPrefix(url, "unix://") {
-			url = strings.TrimPrefix(url, "unix://")
+		} else if u, ok := strings.CutPrefix(url, "unix://"); ok {
+			url = u
 		}
 	} else if config.URL != "" {
 		// Second priority: Use URL if set

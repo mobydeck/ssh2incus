@@ -30,8 +30,8 @@ func hostAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 	return authKeyCheck(ctx, key, lu, keys, "host")
 }
 
-// inAuthHandler performs host auth and instance auth
-func inAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
+// instanceAuthHandler performs host auth and instance auth
+func instanceAuthHandler(ctx ssh.Context, key ssh.PublicKey) bool {
 	log := log.WithField("session", ctx.ShortSessionID())
 	lu := LoginUserFromContext(ctx)
 
@@ -125,7 +125,7 @@ func passwordHandler(ctx ssh.Context, password string) bool {
 	err = checkHostShadowPassword(hostUser.Username, password)
 	if err != nil {
 		log.Errorf("auth (host): user %q: %v", hostUser.Username, err)
-		if !config.InAuth {
+		if !config.InstanceAuth {
 			return false
 		}
 	} else {

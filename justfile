@@ -1,3 +1,5 @@
+set export
+
 name := "ssh2incus"
 # Get version from git tags
 version := `git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev"`
@@ -14,9 +16,8 @@ build_flags := common_build_flags + "'" + common_ldflags + "'"
 version_ldflag := " -X " + name + ".version=" + version
 githash_ldflag := " -X " + name + ".gitHash=" + githash
 builtat_ldflag := " -X " + name + ".builtAt=" + builtat
-sysgroups_ldflag := " -X " + name + ".flagGroups=" + sysgroups
 proxy_device_prefix_flag := " -X " + name + "/pkg/incus.ProxyDevicePrefix=" + name + "-proxy"
-ssh2incus_build_flags := common_build_flags + "'" + common_ldflags + version_ldflag + githash_ldflag + builtat_ldflag + sysgroups_ldflag + proxy_device_prefix_flag + "'"
+main_build_flags := common_build_flags + "'" + common_ldflags + version_ldflag + githash_ldflag + builtat_ldflag + proxy_device_prefix_flag + "'"
 
 # Default recipe to show available commands
 default:
@@ -33,16 +34,23 @@ tag tag:
 test:
     go test ./...
 
+generate:
+    echo "# Arguments to pass to {{name}} daemon" > ./packaging/{{name}}.env
+    echo "ARGS=-m" >> ./packaging/{{name}}.env
+    echo >> ./packaging/{{name}}.env
+    go run ./cmd/{{name}} -h | awk 'NR > 2 && NR < length {print "#" $0}' >> ./packaging/{{name}}.env
+    go generate ./...
+
 build:
-    just build-sftp-server amd64
-    just build-sftp-server arm64
+    just build-sftp-server-all
+    just build-stdio-proxy-all
 
 # Build for a specific platform and architecture
 build-for os arch:
     @echo "Building for {{os}} ({{arch}}) version {{version}}..."
     @mkdir -p dist
     CGO_ENABLED=0 GOOS={{os}} GOARCH={{arch}} \
-    go build {{ssh2incus_build_flags}} \
+    go build {{main_build_flags}} \
         -o ./dist/{{name}}-{{os}}-{{arch}} \
         cmd/{{name}}/{{name}}.go
 
@@ -76,9 +84,9 @@ download-tmux-all:
 
 download-tmux arch:
     mkdir -p server/tmux-binary/bin
-    curl -o server/tmux-binary/bin/ssh2incus-tmux-{{arch}}.gz -L https://github.com/arthurpro/tmux-static-build/releases/download/3.5a/tmux.linux-{{arch}}.gz
+    curl -o server/tmux-binary/bin/{{name}}-tmux-{{arch}}.gz -L https://github.com/arthurpro/tmux-static-build/releases/download/3.5a/tmux.linux-{{arch}}.gz
 
-build-all: clean create-dist
+build-all: clean create-dist generate test
     just build-sftp-server-all
     just build-stdio-proxy-all
     just build-for linux amd64
@@ -94,7 +102,7 @@ create-dist:
 
 # Clean build artifacts
 clean:
-    rm -rf dist
+    rm -rf dist release
     rm -f {{name}} {{name}}.exe
 
 # Create archive for a specific build
@@ -133,7 +141,7 @@ create-package pkg arch:
     VERSION={{version}} RELEASE={{release}} ARCH={{arch}} nfpm pkg -p {{pkg}} -f ./packaging/nfpm.yaml -t ./release
 
 # Create a GitHub release and upload distribution files
-release: package
+release: clean package
     #!/bin/sh -e
     echo "Creating GitHub release for version {{version}}..."
     if [ "$(git status --porcelain)" != "" ]; then \

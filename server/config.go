@@ -31,19 +31,19 @@ type Config struct {
 	Debug         bool
 	Banner        bool
 	NoAuth        bool
-	InAuth        bool
+	InstanceAuth  bool
 	PassAuth      bool
 	AllowCreate   bool
+	ChrootSFTP    bool
 	Welcome       bool
+	Pprof         bool
+	PprofListen   string
 	AuthMethods   []string
 	AllowedGroups []string
 	IdleTimeout   time.Duration
+	ConfigFile    string
 
 	IncusInfo map[string]interface{}
-}
-
-func SetConfig(c *Config) {
-	config = c
 }
 
 func (c *Config) SocketFdEnvName() string {

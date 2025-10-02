@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"ssh2incus/pkg/ssh"
 )
@@ -25,17 +27,43 @@ func bannerHandler(ctx ssh.Context) string {
 	if lu.IsCommand() {
 		return banner
 	}
+
+	hostname, _ := os.Hostname()
+	displayHostname := hostname
+
 	remote := lu.Remote
 	if remote != "" {
 		remote += " / "
 	}
-	hostname, _ := os.Hostname()
-	if hostname != "" {
-		hostname = fmt.Sprintf(" 💻 %s%s", remote, hostname)
+	if displayHostname != "" {
+		displayHostname = fmt.Sprintf(" 💻 %s%s", remote, displayHostname)
 	}
+
+	paths := []string{"banner.txt"}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		paths = append(paths, filepath.Join(home, ".config", "ssh2incus", "banner.txt"))
+	}
+	paths = append(paths, filepath.Join("/etc", "ssh2incus", "banner.txt"))
+
+	replacer := strings.NewReplacer(
+		"[INSTANCE_USER]", lu.InstanceUser,
+		"[INSTANCE]", lu.Instance,
+		"[PROJECT]", lu.Project,
+		"[REMOTE]", lu.Remote,
+		"[HOSTNAME]", hostname,
+	)
+
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		return "\n" + replacer.Replace(string(data)) + "\n"
+	}
+
 	b := banner + fmt.Sprintf(
 		"👤 %s 📦 %s.%s%s\n────────────────────────────────────────────────\n",
-		lu.InstanceUser, lu.Instance, lu.Project, hostname,
+		lu.InstanceUser, lu.Instance, lu.Project, displayHostname,
 	)
 	return b + "\n"
 }

@@ -17,8 +17,12 @@ cmd/nutshell
 /scripts
 /nutshell
 /toybox
+/ssh2incus
+/PRESS_*.md
 
+*.bak
 .envrc
 makefile
-*.yaml
 **/terminfo/**
+/*.yaml
+/*.txt

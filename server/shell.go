@@ -12,9 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"ssh2incus/pkg/incus"
 	"ssh2incus/pkg/shlex"
@@ -24,6 +22,7 @@ import (
 
 	"github.com/creack/pty"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 // Constants for exit codes
@@ -244,7 +243,7 @@ func shellHandler(s ssh.Session) {
 			io.WriteString(s, fmt.Sprintf("creating instance...\n"))
 
 			home, _ := os.UserHomeDir()
-			createConfigDefaults, err := LoadCreateConfigWithFallback(
+			cc, err := LoadCreateConfigWithFallback(
 				[]string{
 					"",
 					path.Join(home, ".config", config.App.Name()),
@@ -253,18 +252,25 @@ func shellHandler(s ssh.Session) {
 			if err != nil {
 				log.Error(err)
 			}
+			err = cc.ApplyProfiles(lu.CreateConfig.Profiles)
+			if err != nil {
+				log.Errorf("shell: create config: %v", err)
+				io.WriteString(s, fmt.Sprintf("%s\n", err))
+				s.Exit(ExitCodeConnectionError)
+				return
+			}
 
 			params := incus.CreateInstanceParams{
 				Name:      lu.Instance,
 				Project:   lu.Project,
-				Image:     createConfigDefaults.Image,
-				Memory:    createConfigDefaults.MemoryInt(),
-				Cpu:       createConfigDefaults.CpuInt(),
-				Disk:      createConfigDefaults.DiskInt(),
-				Ephemeral: createConfigDefaults.Ephemeral,
-				Vm:        createConfigDefaults.Vm,
-				Config:    createConfigDefaults.Config,
-				Devices:   createConfigDefaults.Devices,
+				Image:     cc.Image(),
+				Memory:    cc.Memory(),
+				CPU:       cc.CPU(),
+				Disk:      cc.Disk(),
+				Ephemeral: cc.Ephemeral(),
+				VM:        cc.VM(),
+				Config:    cc.Config(),
+				Devices:   cc.Devices(),
 			}
 
 			if lu.CreateConfig.Image != nil {
@@ -275,8 +281,8 @@ func shellHandler(s ssh.Session) {
 				params.Memory = *lu.CreateConfig.Memory
 			}
 
-			if lu.CreateConfig.Cpu != nil {
-				params.Cpu = *lu.CreateConfig.Cpu
+			if lu.CreateConfig.CPU != nil {
+				params.CPU = *lu.CreateConfig.CPU
 			}
 
 			if lu.CreateConfig.Disk != nil {
@@ -295,8 +301,12 @@ func shellHandler(s ssh.Session) {
 				params.Privileged = *lu.CreateConfig.Privileged
 			}
 
-			if lu.CreateConfig.Vm != nil {
-				params.Vm = *lu.CreateConfig.Vm
+			if lu.CreateConfig.VM != nil {
+				params.VM = *lu.CreateConfig.VM
+			}
+
+			if params.Ephemeral {
+				io.WriteString(s, fmt.Sprintf("tip: run `sudo poweroff` to destroy ephemeral instance\n"))
 			}
 
 			log.Debugf("shell: create instance config: %+v", params)
@@ -307,6 +317,17 @@ func shellHandler(s ssh.Session) {
 				io.WriteString(s, fmt.Sprintf("cannot create instance:\n%s\n", err))
 				s.Exit(ExitCodeInternalError)
 				return
+			}
+			// try this if instance user is not root assuming that it needs to be created by cloud-init
+			if lu.InstanceUser != "root" {
+				for i := 0; i < 20; i++ {
+					sleep := time.Duration(i/10+1) * time.Second
+					time.Sleep(sleep)
+					iu, err := client.GetInstanceUser(params.Project, params.Name, lu.InstanceUser)
+					if iu != nil && err == nil {
+						break
+					}
+				}
 			}
 		}
 	}
@@ -397,9 +418,8 @@ func shellHandler(s ssh.Session) {
 	log.Debugf("shell: PTY %v", isPty)
 	log.Debugf("shell: ENV %s", oneLine(util.MapToEnvString(env)))
 
-	if config.Welcome && isPty && !isRaw {
-		s.Write(
-			[]byte(fmt.Sprintf("%s\n\n", iu.Welcome())))
+	if welcome := welcomeHandler(iu); config.Welcome && isPty && !isRaw && welcome != "" {
+		s.Write([]byte(fmt.Sprintf("\n%s\n\n", welcome)))
 	}
 
 	// Setup I/O pipes
@@ -470,8 +490,12 @@ Type incus command:
 		return
 	}
 
+	if ptyReq.Term != "" {
+		cmd.Env = append(cmd.Env,
+			fmt.Sprintf("TERM=%s", ptyReq.Term))
+	}
+
 	cmd.Env = append(cmd.Env,
-		fmt.Sprintf("TERM=%s", ptyReq.Term),
 		fmt.Sprintf("SSH_SESSION=%s", s.Context().ShortSessionID()),
 		"PATH=/bin:/usr/bin:/snap/bin:/usr/local/bin",
 	)
@@ -938,8 +962,14 @@ func startWindowChannel(inputCh <-chan ssh.Window, outputCh chan<- incus.Window)
 }
 
 func setWinsize(f *os.File, w, h int) {
-	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ),
-		uintptr(unsafe.Pointer(&struct{ h, w, x, y uint16 }{uint16(h), uint16(w), 0, 0})))
+	ws := &unix.Winsize{
+		Row: uint16(h),
+		Col: uint16(w),
+	}
+
+	if err := unix.IoctlSetWinsize(int(f.Fd()), unix.TIOCSWINSZ, ws); err != nil {
+		log.Debugf("shell: failed to set pty winsize: %v", err)
+	}
 }
 
 // Helper function to check if an error is a timeout

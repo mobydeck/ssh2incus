@@ -5,7 +5,171 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.7.0] - 2025-09-25
+## v0.8.0 — 2025-10-02
+
+### Added
+
+#### Configuration File Support
+- **YAML Configuration**: New `config.yaml` file support for persistent server configuration
+  - Configuration file loads from current directory, `$HOME/.config/ssh2incus/`, or `/etc/ssh2incus/` (checked in order)
+  - All configuration options available as YAML settings with same names as command-line flags
+  - All options commented out by default to use system defaults
+  - Command-line flags have higher priority than configuration file options
+- **Flexible Configuration Management**: Simplified server configuration without modifying system service files
+  - Each YAML setting maps directly to corresponding command-line flag
+  - Easy to enable/disable features by uncommenting configuration options
+  - Better configuration organization and documentation
+
+#### Enhanced Instance Creation Configuration
+- **Profile-Based Instance Creation**: New `%profile` syntax allows applying predefined configuration profiles during instance creation
+  - Use `%profile1+%profile2` in login string (e.g., `ssh +instance+%web-server+%database@host`)
+  - Profiles are applied in order with later profiles overriding earlier ones
+  - Direct configuration options always override profile settings
+- **File Include Support**: Configuration files now support external file includes
+  - `!include filename.ext` syntax for loading file contents into configuration values
+  - `<@filename.ext` alternative syntax for file includes
+  - Smart path resolution: first tries relative to config file directory, then current working directory
+- **Advanced Configuration Templates**: Enhanced `create-config.yaml` with profile support
+  - New `profiles` section for defining reusable configuration templates
+  - Hierarchical configuration resolution: defaults → profiles → direct options
+  - Support for complex multi-profile scenarios
+
+#### Instance Creation Workflow Improvements
+- **Configuration Override Hierarchy**: Clear precedence order for configuration resolution
+  - Base defaults from `create-config.yaml`
+  - Applied profiles in specified order
+  - Direct SSH login string options (highest priority)
+- **Enhanced Login String Parsing**: Improved parsing of complex instance creation syntax
+  - Support for multiple profiles: `+instance+%profile1+%profile2+options@host`
+  - Better error handling for malformed login strings
+  - Validation of profile existence before instance creation
+
+#### Built-in SFTP Server Enhancements
+- **CHROOT Support**: New `-c` flag enables chrooting to the start directory for enhanced security isolation
+- **Directory Control**: Enhanced `-d` flag for setting custom start directories in SFTP sessions
+- **Security Improvements**: Better privilege separation and directory access control
+
+#### SSH Banner and Welcome Message Customization
+- **Custom Banner Support**: Server now looks for `banner.txt` file to display custom SSH login banners
+- **Welcome Message**: Optional `welcome.txt` file provides personalized welcome messages for users
+- **Template Variables**: Both banner and welcome files support template variables:
+  - `[INSTANCE_USER]`: Current instance user
+  - `[INSTANCE]`: Instance name
+  - `[PROJECT]`: Project name
+  - `[REMOTE]`: Remote server name
+  - `[HOSTNAME]`: System hostname
+- **Example Files**: Provided `banner.txt.example` and `welcome.txt.example` templates in packaging
+
+#### Improved Login String Parsing
+- **Enhanced Parser**: Completely refactored login string parsing with better modularity
+- **Comprehensive Testing**: Extensive test coverage for all login string formats and edge cases
+- **Better Error Handling**: Improved validation and error reporting for malformed login strings
+- **Backward Compatibility**: Maintained full compatibility with existing login string formats
+
+### Changed
+
+#### Configuration System
+- **Extended CreateConfig Structure**: Enhanced configuration file format
+  - Added `profiles` map for named configuration templates
+  - Improved validation and error reporting for configuration files
+  - Better handling of optional configuration sections
+- **Enhanced File Processing**: Improved `LoadCreateConfig` function
+  - Added file include processing for both defaults and profile configurations
+  - Better error messages for missing include files or invalid paths
+  - Support for nested configuration scenarios
+
+#### SFTP Server Implementation
+- **Command-line Flags**: Added support for standard OpenSSH SFTP server flags (-c, -d, -R, -e, -u, -l, -h)
+- **Security Model**: Enhanced security with proper chroot and directory change operations
+- **Environment Integration**: Better integration with UID/GID environment variables
+
+#### Login String Processing
+- **Modular Architecture**: Split parsing logic into focused, testable functions
+- **Performance Improvements**: Optimized parsing for complex login string formats
+- **Code Organization**: Better separation of concerns for different login string components
+
+### Improved
+
+#### User Experience
+- **Intuitive Profile Usage**: Simple syntax for applying complex configurations
+  - Example: `ssh +web01+%nginx+%ssl+ubuntu/24.04@host` applies nginx and SSL profiles with Ubuntu 24.04
+- **Flexible Configuration Management**: Easy organization of instance templates
+  - Separate profile files can be included via file include directives
+  - Configuration inheritance allows for base profiles with specialized extensions
+- **Better Error Handling**: Enhanced error messages for configuration issues
+  - Clear indication when profiles are missing or invalid
+  - Better path resolution error reporting for file includes
+- **Visual Feedback**: Custom banners provide better visual identification of servers and instances
+- **Personalization**: Welcome messages can be customized per deployment
+- **Security**: SFTP chroot functionality provides better file access isolation
+
+#### Development & Maintenance
+- **Modular Configuration**: Profile-based system enables better configuration organization
+- **Template Reusability**: Profiles can be shared across different instance creation scenarios
+- **Configuration Validation**: Enhanced validation ensures configuration consistency
+
+### Examples
+
+#### Profile-Based Instance Creation
+```bash
+# Create instance with web-server profile
+ssh -p 2222 +web01+%web-server@host
+
+# Create instance with multiple profiles (database settings override web-server)
+ssh -p 2222 +app01+%web-server+%database@host
+
+# Override profile settings with direct options
+ssh -p 2222 +dev01+%development+m16+c8@host
+```
+
+#### Configuration File with Profiles
+```yaml
+version: 1
+defaults:
+  image: alpine/edge
+  memory: 1
+  cpu: 1
+
+profiles:
+  web-server:
+    image: ubuntu/24.04
+    memory: 2
+    cpu: 2
+    config:
+      user.user-data: "!include web-server-init.yaml"
+
+  database:
+    memory: 4
+    cpu: 2
+    config:
+      user.user-data: "<@database-setup.sh"
+```
+
+### Technical Details
+
+#### New Configuration Processing
+- File includes processed after YAML unmarshaling but before instance creation
+- Profile merging follows last-wins precedence for conflicting settings
+- Path resolution tries config directory first, then current working directory
+- Enhanced error reporting with specific failure contexts
+
+#### SFTP Server Flags
+- `-c`: Enable chroot to start directory
+- `-d DIR`: Set start directory
+- `-R`: Read-only mode
+- `-e`: Debug to stderr
+- `-u UMASK`: Set explicit umask
+- `-l LEVEL`: Debug level (ignored for compatibility)
+- `-h`: Show help
+
+#### Banner and Welcome File Locations
+- Files are searched in standard configuration directories
+- Template variable substitution occurs at runtime
+- Graceful fallback when files are not present
+
+---
+
+## v0.7.0 — 2025-09-25
 
 ### Added
 
@@ -117,7 +281,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v0.6.0] - 2025-04-07
+## v0.6.0 — 2025-04-07
 
 Release with core SSH-to-Incus functionality, including:
 - Basic SSH server with Incus integration

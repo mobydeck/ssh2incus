@@ -1,0 +1,5 @@
+.idea/
+.zed/
+build/
+dist/
+release/

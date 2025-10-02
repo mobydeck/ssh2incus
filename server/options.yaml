@@ -1,0 +1,140 @@
+- name: dump
+  type: boolean
+  help: dump parsed config
+  default: false
+- name: dump-create
+  type: boolean
+  help: dump parsed create config
+  default: false
+- name: help
+  short: h
+  type: boolean
+  help: print help
+  default: false
+- name: debug
+  short: d
+  type: boolean
+  help: enable debug log
+  default: false
+- name: pprof
+  type: boolean
+  help: enable pprof
+  default: false
+- name: master
+  short: m
+  type: boolean
+  help: start master process and spawn workers
+  default: false
+- name: banner
+  short: b
+  type: boolean
+  help: show banner on login
+  default: false
+- name: noauth
+  type: boolean
+  help: disable SSH authentication completely
+  default: false
+- name: instance-auth
+  short: I
+  #  alias: inauth
+  type: boolean
+  help: enable authentication using instance keys
+  default: false
+- name: inauth
+  type: boolean
+  help: use --instance-auth
+  default: false
+  deprecated: true
+- name: password-auth
+  short: P
+  type: boolean
+  help: enable password authentication
+  default: false
+- name: allow-create
+  short: C
+  type: boolean
+  help: allow creating new instances
+  default: false
+- name: chroot-sftp
+  type: boolean
+  help: enable home dir chroot for SFTP sessions
+  default: false
+- name: welcome
+  short: w
+  type: boolean
+  help: show welcome message to users connecting to shell
+  default: false
+- name: version
+  short: v
+  type: boolean
+  help: print version
+  default: false
+- name: listen
+  short: l
+  type: string
+  help: listen on ":port" or "host:port"
+  default: ":2222"
+- name: socket
+  short: s
+  type: string
+  help: Incus socket to connect to (optional, defaults to INCUS_SOCKET env)
+  default: ""
+- name: shell
+  short: S
+  type: string
+  help: "shell access command: login, su, sush or user shell (default)"
+  default: ""
+- name: url
+  short: u
+  type: string
+  help: Incus remote url to connect to (should start with https://)
+  default: ""
+- name: remote
+  short: r
+  type: string
+  help: default Incus remote to use
+  default: ""
+- name: auth-methods
+  short:
+  type: string
+  help: 'enable auth method chain, e.g.: "publickey,password"'
+  default: ""
+- name: client-cert
+  short: c
+  type: string
+  help: client certificate for remote
+  default: ""
+- name: client-key
+  short: k
+  type: string
+  help: client key for remote
+  default: ""
+- name: server-cert
+  short: t
+  type: string
+  help: server certificate for remote
+  default: ""
+- name: groups
+  short: g
+  type: string
+  help: list of groups members of which allowed to connect
+  default: "incus,incus-admin"
+- name: term-mux
+  short: T
+  type: string
+  help: "terminal multiplexer: tmux (default) or screen"
+  default: "tmux"
+- name: pprof-listen
+  type: string
+  help: pprof listen on ":port" or "host:port"
+  default: ":6060"
+- name: healthcheck
+  short: H
+  type: string
+  help: enable Incus health check every X minutes, e.g. "5m"
+  default: ""
+- name: idle-timeout
+  short:
+  type: duration
+  help: idle session timeout duration, e.g. 180s or 5m
+  default: "180s"

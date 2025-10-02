@@ -1,0 +1,76 @@
+# Default configuration template for ssh2incus.
+# Each setting corresponds to a command-line flag; uncomment and adjust as needed.
+# Flags set in /etc/default/ssh2incus have precedence over configuration file settings.
+
+# Allow creating new instances (flag: --allow-create, -C).
+# allow-create: false
+
+# Enable auth method chain, e.g.: "publickey,password" (flag: --auth-methods).
+# auth-methods: ""
+
+# Show banner on login (flag: --banner, -b).
+# banner: false
+
+# Enable home dir chroot for SFTP sessions (flag: --chroot-sftp).
+# chroot-sftp: false
+
+# Client certificate for remote (flag: --client-cert, -c).
+# client-cert: ""
+
+# Client key for remote (flag: --client-key, -k).
+# client-key: ""
+
+# Enable debug log (flag: --debug, -d).
+# debug: false
+
+# List of groups members of which allowed to connect (flag: --groups, -g).
+# groups: "incus,incus-admin"
+
+# Enable Incus health check every X minutes, e.g. "5m" (flag: --healthcheck, -H).
+# healthcheck: ""
+
+# Idle session timeout duration, e.g. 180s or 5m (flag: --idle-timeout).
+# idle-timeout: "180s"
+
+# Enable authentication using instance keys (flag: --instance-auth, -I).
+# instance-auth: false
+
+# Listen on ":port" or "host:port" (flag: --listen, -l).
+# listen: ":2222"
+
+# Start master process and spawn workers (flag: --master, -m).
+# master: false
+
+# Disable SSH authentication completely (flag: --noauth).
+# noauth: false
+
+# Enable password authentication (flag: --password-auth, -P).
+# password-auth: false
+
+# Enable pprof (flag: --pprof).
+# pprof: false
+
+# Pprof listen on ":port" or "host:port" (flag: --pprof-listen).
+# pprof-listen: ":6060"
+
+# Default Incus remote to use (flag: --remote, -r).
+# remote: ""
+
+# Server certificate for remote (flag: --server-cert, -t).
+# server-cert: ""
+
+# Shell access command: login, su, sush or user shell (default) (flag: --shell, -S).
+# shell: ""
+
+# Incus socket to connect to (optional, defaults to INCUS_SOCKET env) (flag: --socket, -s).
+# socket: ""
+
+# Terminal multiplexer: tmux (default) or screen (flag: --term-mux, -T).
+# term-mux: "tmux"
+
+# Incus remote url to connect to (should start with https://) (flag: --url, -u).
+# url: ""
+
+# Show welcome message to users connecting to shell (flag: --welcome, -w).
+# welcome: false
+
