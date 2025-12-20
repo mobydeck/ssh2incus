@@ -103,8 +103,6 @@ The main configuration file (`create-config.yaml`) defines default settings and 
 ### Basic Structure
 
 ```yaml
-version: 1
-
 defaults:
     # Default settings for all instances
     image: alpine/edge
@@ -659,8 +657,6 @@ The configuration content remains the same; only the key names change from `user
 
 **create-config.yaml:**
 ```yaml
-version: 1
-
 defaults:
     image: alpine/edge
     ephemeral: false

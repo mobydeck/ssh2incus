@@ -21,7 +21,7 @@ need to run SSH servers inside the instances.
 - **Flexible Authentication**:
   - Public key authentication using host SSH keys (default)
   - Password authentication support (`--password-auth`)
-  - Instance-based SSH key authentication (`--inauth`)
+  - Instance-based SSH key authentication (`--instance-auth`)
   - Multi-factor authentication chains (`--auth-methods`)
   - No-auth mode for development environments (`--noauth`)
 - **Multiple Remotes**: Connect to any remote from `incus remote list`

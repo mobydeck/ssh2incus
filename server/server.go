@@ -42,7 +42,7 @@ func Run() {
 // It determines whether to serve as a child process, master, or daemon.
 func (s *Server) Run() {
 	if os.Getenv(config.SocketFdEnvName()) != "" {
-		log.Infof("starting %s as child process, pid %d", config.App.Name(), os.Getpid())
+		log.Infof("%s child process, pid %d", config.App.Name(), os.Getpid())
 		s.Serve()
 		os.Exit(0)
 	}
@@ -165,7 +165,7 @@ func (s *Server) Serve() {
 		log.Fatalf("failed to create connection from file: %v", err)
 	}
 	defer conn.Close()
-	log.Infof("child serving connection from %s", conn.RemoteAddr())
+	log.Infof("child process serving connection from %s", conn.RemoteAddr())
 
 	ctx, cancel := ssh.NewContext(server)
 	ctx.SetValue(ssh.ContextKeyCancelFunc, cancel)
@@ -183,7 +183,7 @@ func (s *Server) Serve() {
 		log.Errorf("failed to shutdown devices: %v", err)
 	}
 
-	log.Info("child server stopped")
+	log.Infof("%s child process ended, pid %d", config.App.Name(), os.Getpid())
 }
 
 func handoffToChild(conn net.Conn) {
@@ -218,7 +218,7 @@ func handoffToChild(conn net.Conn) {
 
 	cmd := exec.Command(os.Args[0], "serve", conn.RemoteAddr().String())
 	var env []string
-	for _, e := range env {
+	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, config.SocketFdEnvName()+"=") {
 			continue
 		}
@@ -253,7 +253,7 @@ func handoffToChild(conn net.Conn) {
 
 	//We don't need to wait for the child at all, since it's detached
 	//Just let the process ID be collected by the OS
-	log.Infof("started detached child process with pid %d", cmd.Process.Pid)
+	log.Infof("started detached child process, pid %d", cmd.Process.Pid)
 	//cmd.Process.Release()
 	// Wait allows avoid <defunct> processes
 	cmd.Process.Wait()
