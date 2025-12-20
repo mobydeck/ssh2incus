@@ -11,7 +11,7 @@ import (
 	"ssh2incus/pkg/incus"
 	"ssh2incus/pkg/ssh"
 	"ssh2incus/pkg/util"
-	"ssh2incus/server/stdio-proxy-binary"
+	stdio_proxy_binary "ssh2incus/server/stdio-proxy-binary"
 
 	"github.com/lxc/incus/v6/shared/api"
 	log "github.com/sirupsen/logrus"
@@ -274,13 +274,13 @@ func directTCPIPStdioHandler(srv *ssh.Server, conn *gossh.ServerConn, newChan go
 		stdioProxyBinBytes, err := stdio_proxy_binary.BinBytes(instance.Architecture)
 		if err != nil {
 			log.Errorf("failed to get stdio-proxy binary: %s", err)
-			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("failed to get stdio-proxy binary"))
+			newChan.Reject(gossh.ConnectionFailed, "failed to get stdio-proxy binary")
 			return
 		}
 		stdioProxyBinBytes, err = util.Ungz(stdioProxyBinBytes)
 		if err != nil {
 			log.Errorf("failed to ungzip stdio-proxy: %s", err)
-			newChan.Reject(gossh.ConnectionFailed, fmt.Sprintf("failed to prepare stdio-proxy"))
+			newChan.Reject(gossh.ConnectionFailed, "failed to prepare stdio-proxy")
 			return
 		}
 

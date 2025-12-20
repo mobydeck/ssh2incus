@@ -59,14 +59,14 @@ func sftpSubsystemHandler(s ssh.Session) {
 	sftpServerBinBytes, err := sftp_server_binary.BinBytes(instance.Architecture)
 	if err != nil {
 		log.Errorf("sftp: failed to get sftp-server binary: %s", err)
-		io.WriteString(s, fmt.Sprintf("failed to get sftp-server binary\n"))
+		io.WriteString(s, "failed to get sftp-server binary\n")
 		s.Exit(ExitCodeInternalError)
 		return
 	}
 	sftpServerBinBytes, err = util.Ungz(sftpServerBinBytes)
 	if err != nil {
 		log.Errorf("sftp: failed to ungzip sftp-server: %s", err)
-		io.WriteString(s, fmt.Sprintf("failed to prepare sftp-server\n"))
+		io.WriteString(s, "failed to prepare sftp-server\n")
 		s.Exit(ExitCodeInternalError)
 		return
 	}

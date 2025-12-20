@@ -300,10 +300,8 @@ func setupServer() *ssh.Server {
 	switch {
 	case config.InstanceAuth:
 		publickeyHandler = instanceAuthHandler
-		break
 	case config.NoAuth:
 		publickeyHandler = noAuthHandler
-		break
 	default:
 		publickeyHandler = hostAuthHandler
 	}

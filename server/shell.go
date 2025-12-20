@@ -240,7 +240,7 @@ func shellHandler(s ssh.Session) {
 		// Only attempt to create an instance if it doesn't exist
 		if iu == nil {
 			log.Debugf("shell: creating instance %s", lu)
-			io.WriteString(s, fmt.Sprintf("creating instance...\n"))
+			io.WriteString(s, "creating instance...\n")
 
 			home, _ := os.UserHomeDir()
 			cc, err := LoadCreateConfigWithFallback(
@@ -306,7 +306,7 @@ func shellHandler(s ssh.Session) {
 			}
 
 			if params.Ephemeral {
-				io.WriteString(s, fmt.Sprintf("tip: run `sudo poweroff` to destroy ephemeral instance\n"))
+				io.WriteString(s, "tip: run `sudo poweroff` to destroy ephemeral instance\n")
 			}
 
 			log.Debugf("shell: create instance config: %+v", params)
@@ -363,7 +363,7 @@ func shellHandler(s ssh.Session) {
 		al, err := ssh.NewAgentListener()
 		if err != nil {
 			log.Errorf("shell: failed to create agent listener: %v", err)
-			io.WriteString(s.Stderr(), fmt.Sprintf("failed to setup agent\n"))
+			io.WriteString(s.Stderr(), "failed to setup agent\n")
 		}
 
 		defer al.Close()
@@ -386,7 +386,7 @@ func shellHandler(s ssh.Session) {
 			}()
 		} else {
 			log.Errorf("shell: failed to add agent socket: %v", err)
-			io.WriteString(s.Stderr(), fmt.Sprintf("failed to setup agent socket\n"))
+			io.WriteString(s.Stderr(), "failed to setup agent socket\n")
 		}
 	}
 
@@ -402,7 +402,7 @@ func shellHandler(s ssh.Session) {
 		tmux, err := NewTermMux(s.Context(), config.TermMux, config.App.Name(), usePrefix)
 		if err != nil {
 			log.Errorf("shell: failed to initialize terminal mux: %v", err)
-			io.WriteString(s.Stderr(), fmt.Sprintf("failed to create persistent session\n"))
+			io.WriteString(s.Stderr(), "failed to create persistent session\n")
 		}
 		err = checkTermMux(tmux, client, lu, iu, env)
 		if err != nil {
