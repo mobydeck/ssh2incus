@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="426px" height="523px" viewBox="0 0 426 523" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>ssh2incus</title>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="logo" transform="translate(-1297, -349)">
+            <g id="ssh2incus" transform="translate(1297, 349)">
+                <text fill-rule="nonzero" font-family="Ubuntu-Medium, Ubuntu" font-size="89" font-weight="400">
+                    <tspan x="18" y="506" fill="#343F52">ssh</tspan>
+                    <tspan x="151.144" y="506" fill="#FFC41D">2</tspan>
+                    <tspan x="201.696" y="506" font-family="Ubuntu-Regular, Ubuntu" font-weight="normal" fill="#343F52">incus</tspan>
+                </text>
+                <g id="terminal2" fill-rule="nonzero">
+                    <rect id="Rectangle" fill="#FFC41D" x="0" y="0" width="426" height="383" rx="64"></rect>
+                    <path d="M135.75,275 C138.75,274 146.75,266 167.75,246 C182.75,230 197.75,215 199.75,213 C203.75,207 206.75,198 206.75,191 C206.75,184 203.75,175 199.75,169 C197.75,167 182.75,152 167.75,136 C141.75,110 138.75,108 133.75,107 C124.75,104 117.75,106 111.75,113 C105.75,119 104.75,126 106.75,134 C107.75,137 112.75,142 134.75,164 L160.75,191 L134.75,218 C112.75,240 107.75,245 106.75,249 C104.75,257 105.75,264 112.75,270 C119.75,277 125.75,278 135.75,275 Z" id="Path" fill="#343F52"></path>
+                    <path d="M307.75,274 C308.75,274 312.75,271 313.75,269 C321.75,261 321.75,249 313.75,241 C307.75,234 307.75,234 265.75,234 C228.75,234 228.75,234 223.75,236 C217.75,240 213.75,246 212.75,253 C212.75,260 213.75,265 218.75,270 C224.75,276 226.75,277 267.75,276 C298.75,276 304.75,276 307.75,274 Z" id="Path" fill="#343F52"></path>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

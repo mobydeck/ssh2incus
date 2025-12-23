@@ -1,6 +1,10 @@
+<div align="center">
+  <img src="assets/ssh2incus.svg" alt="ssh2incus logo" width="300" />
+</div>
+
 # ssh2incus – SSH server for Incus instances
 
-_β (beta)_ | Version 0.8 *[changelog](CHANGELOG.md)*
+_β (beta)_ | Version 0.9 *[changelog](CHANGELOG.md)*
 
 > **Beta notice:** Breaking changes may occur between releases while the project remains in beta. Review the changelog before upgrading.
 
@@ -13,11 +17,17 @@ need to run SSH servers inside the instances.
 
 ### Core Features
 
+- **Web-Based User Interface**:
+    - Browser-based terminal access to instance shells
+    - Auto reconnection to instances after disconnection
+    - Web-based instance creation interface with visual configuration builder
+
 - **On-Demand Instance Creation**:
   - Create persistent instances with `+` prefix (e.g., `ssh +test01@host`)
   - Create ephemeral instances with `~` prefix (auto-delete on poweroff)
   - Inline configuration: `ssh +test+ubuntu/24.04+m4+c2+d20+nest+priv@host`
   - Template-based defaults via `create-config.yaml`
+
 - **Flexible Authentication**:
   - Public key authentication using host SSH keys (default)
   - Password authentication support (`--password-auth`)
@@ -51,7 +61,7 @@ need to run SSH servers inside the instances.
     - Instance configuration templates (`create-config.yaml`)
 
 - **Compatibility**:
-    - Built using Incus 6.16 API (updated from 6.11)
+    - Built using Incus 6.20 API
     - Works with Incus inside Lima and Colima
     - Tested with **Jetbrains Gateway**, **VSCode**, **Cursor** and other IDEs
     - Full Ansible support
@@ -61,6 +71,38 @@ need to run SSH servers inside the instances.
 - Advanced authentication options (SSH keys, passwords, JWT, OpenID, OAuth 2.0, LDAP, etc.)
 - Web browser-based terminal access to instance shells
 - 24/7 technical support with prioritized feature development
+
+## Screenshots
+
+### Instance Management Dashboard
+<img src="assets/ssh2incus-main.png" alt="Instance management dashboard showing list of Incus instances" width="600" />
+
+### Web-Based Terminal
+<img src="assets/ssh2incus-reconnect.png" alt="Web-based terminal with auto-reconnection feature" width="600" />
+
+### Persistent Terminal Sessions (tmux)
+<img src="assets/ssh2incus-tmux.png" alt="Persistent terminal sessions using tmux" width="600" />
+
+### Instance Creation Wizard - Step 1
+<img src="assets/ssh2incus-step1.png" alt="Instance creation wizard step 1 - basic configuration" width="600" />
+
+### Instance Creation Wizard - Step 2: Configuration
+<img src="assets/ssh2incus-step2-config.png" alt="Instance creation step 2 - configuration options" width="600" />
+
+### Instance Creation Wizard - Step 2: Disk Devices
+<img src="assets/ssh2incus-step2-disk.png" alt="Instance creation step 2 - disk device configuration" width="600" />
+
+### Instance Creation Wizard - Step 2: Proxy Devices
+<img src="assets/ssh2incus-step2-proxy.png" alt="Instance creation step 2 - proxy device configuration" width="600" />
+
+### Instance Creation Wizard - Step 3: Cloud-Init
+<img src="assets/ssh2incus-step3-cloud-init.png" alt="Instance creation step 3 - cloud-init configuration" width="600" />
+
+### Instance Creation Wizard - Step 4: Review & Summary
+<img src="assets/ssh2incus-step4-summary.png" alt="Instance creation step 4 - review and create" width="600" />
+
+### Instance Details Drawer
+<img src="assets/ssh2incus-drawer.png" alt="Instance details drawer showing configuration and status" width="600" />
 
 ## Installation
 
@@ -91,6 +133,61 @@ Monitor logs:
 
 ```shell
 journalctl -f -u ssh2incus.service
+```
+
+### Web Console Security (Reverse Proxy)
+
+> **Recommendation**: For production deployments, always run the web console behind an SSL-terminated reverse proxy server to ensure encrypted communication and implement additional security controls.
+
+The web console listens on `localhost:2280` by default. For external access, configure a reverse proxy with SSL/TLS termination:
+
+#### Caddy Example
+
+```
+https://ssh2incus.mycompany.com {
+    reverse_proxy localhost:2280
+}
+```
+
+#### Nginx Example
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name ssh2incus.mycompany.com;
+
+    ssl_certificate /path/to/certificate.crt;
+    ssl_certificate_key /path/to/private.key;
+
+    location / {
+        proxy_pass http://localhost:2280;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+#### Apache Example
+
+```apache
+<VirtualHost *:443>
+    ServerName ssh2incus.mycompany.com
+
+    SSLEngine on
+    SSLCertificateFile /path/to/certificate.crt
+    SSLCertificateKeyFile /path/to/private.key
+
+    ProxyPreserveHost On
+    ProxyPass / http://localhost:2280/ upgrade=websocket connection=upgrade
+    ProxyPassReverse / http://localhost:2280/
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Host "ssh2incus.mycompany.com"
+</VirtualHost>
 ```
 
 ## Connection Guide
@@ -741,6 +838,9 @@ Uncomment and modify any options you want to change from their defaults.
 -T, --term-mux string         terminal multiplexer: tmux (default) or screen (default "tmux")
 -u, --url string              Incus remote url to connect to (should start with https://)
 -v, --version                 print version
+-W, --web                     enable web server
+    --web-auth string         enable basic http authentication for web console (comma-separated user:password values)
+    --web-listen string       web server listen address (default "127.0.0.1:2280")
 -w, --welcome                 show welcome message to users connecting to shell
 ```
 
@@ -996,7 +1096,15 @@ For production environments, consider these firewall best practices:
 ### Community Support
 
 Get help from the community and developers:
+
+- **Community Board**: Share feedback, feature requests, and ideas on our [community board](https://ask.ssh2incus.com)
+  - 🎯 **Feature requests** for additional functionality
+  - 🐛 **Bug reports** with reproduction steps
+  - 💡 **Ideas** for improving the user experience
+  - 📧 **Comments** and feedback on existing features
+
 - **GitHub Issues**: Report bugs, request features, or ask questions through the [GitHub repository](https://github.com/mobydeck/ssh2incus/issues)
+
 - **Documentation**: Refer to the [online documentation](https://ssh2incus.com/documentation) for detailed guides and tutorials
 
 ### Enterprise Support
