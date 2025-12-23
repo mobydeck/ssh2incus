@@ -5,9 +5,13 @@
 /release
 /.go
 _examples/
+node_modules/
 server/*/bin/
+/.*
+
 
 /ansible
+/web/dist
 Makefile
 cmd/helper
 cmd/nutshell
