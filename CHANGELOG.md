@@ -5,7 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.8.0 — 2025-10-02
+## v0.9 — 2025-12-23
+
+### Added
+
+#### Web-Based User Interface
+- **Modern Web Dashboard**: New responsive web interface for managing Incus instances
+- **Web-Based Terminal**: Browser-based terminal emulation for instance shells
+  - xterm.js integration with full terminal support
+  - Persistent terminal sessions using tmux/screen
+
+#### Instance Creation Web UI
+- **Multi-Step Creation Wizard**: Comprehensive 4-step instance creation interface
+  - Step 1: Basic configuration (name, project, profile, image, resources)
+  - Step 2: Advanced settings (configuration, devices)
+  - Step 3: Cloud-init configuration with code editor
+  - Step 4: Summary and review before creation
+- **Profile-Based Configuration**: Full profile integration in web UI
+  - Profile selection with cumulative merge strategy (overlays on current config)
+  - Applied profiles history tracking with badges
+  - Reset button to revert to defaults
+- **Device Management**: Specialized editors for different device types
+  - Proxy device editor with protocol selection (TCP/UDP/Unix), NAT mode, and address configuration
+  - Disk device editor for mounting volumes and directories
+  - Generic device editor for other device types
+- **Cloud-Init Support**:
+  - Code editor with YAML and shell script syntax highlighting
+  - Cloud-init support warning for non-cloud images
+- **Image Selection**: Searchable image aliases and metadata
+
+#### Setup Profile Merging Algorithm
+- **For Default Profile**: Apply completely to all form fields
+- **For Non-Default Profiles**: Merge on top of current form state
+  - Step 1 fields override current values
+  - Step 2 config merges additively (profile overrides on key collision)
+  - Step 2 devices merge (same device name overwrites, respects type)
+  - Step 3 cloud-init overrides if provided
+
+### Migration Guide
+
+#### For Users
+1. New web interface available at `http://host:port` (when enabled)
+2. Instance creation now possible via web UI without SSH login syntax
+3. Profile selection in web UI uses cumulative merging (not replacement)
+4. Form state auto-saves to browser localStorage
+
+#### For Admins
+1. Enable web UI with `--web|-W` flag or `web: true` in config.yaml
+2. Configure web authentication with `--web-auth user1:password1,user2:password2`
+3. Set web UI listen address with `--web-listen 0.0.0.0:8080` or `web_listen: 0.0.0.0:8080` in config.yaml
+4. Instance creation profiles now support device configuration
+5. Cloud-init data can be preloaded from profiles in create-config.yaml
+
+---
+
+## v0.8 — 2025-10-02
 
 ### Added
 
@@ -169,7 +223,7 @@ profiles:
 
 ---
 
-## v0.7.0 — 2025-09-25
+## v0.7 — 2025-09-25
 
 ### Added
 
@@ -281,7 +335,7 @@ profiles:
 
 ---
 
-## v0.6.0 — 2025-04-07
+## v0.6 — 2025-04-07
 
 Release with core SSH-to-Incus functionality, including:
 - Basic SSH server with Incus integration
