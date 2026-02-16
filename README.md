@@ -4,7 +4,8 @@
 
 # ssh2incus – SSH server for Incus instances
 
-_β (beta)_ | Version 0.9 *[changelog](CHANGELOG.md)*
+
+_β (beta)_ | Version 0.10 *[changelog](CHANGELOG.md)*
 
 > **Beta notice:** Breaking changes may occur between releases while the project remains in beta. Review the changelog before upgrading.
 
@@ -28,12 +29,20 @@ need to run SSH servers inside the instances.
   - Inline configuration: `ssh +test+ubuntu/24.04+m4+c2+d20+nest+priv@host`
   - Template-based defaults via `create-config.yaml`
 
+- **Instance Management**:
+  - Remove instances via `/rm/` or `/remove/` commands (requires root host user)
+  - Force removal with `/rm-f/` or `/remove-force/` to skip confirmation
+  - Automatic handling of ephemeral instance cleanup
+  - Explain login strings with `/explain/` command for troubleshooting
+
 - **Flexible Authentication**:
   - Public key authentication using host SSH keys (default)
   - Password authentication support (`--password-auth`)
   - Instance-based SSH key authentication (`--instance-auth`)
   - Multi-factor authentication chains (`--auth-methods`)
   - No-auth mode for development environments (`--noauth`)
+  - NixOS support (checks `/etc/ssh/authorized_keys.d/<user>`)
+
 - **Multiple Remotes**: Connect to any remote from `incus remote list`
 - **Terminal Support**: Full PTY (terminal) mode and remote command execution
 - **File Transfer**: Complete SCP and SFTP support with integrated SFTP server
@@ -59,6 +68,7 @@ need to run SSH servers inside the instances.
     - Cross-platform package management (Debian, RHEL, Alpine)
     - Automatic OS detection and package manager selection
     - Instance configuration templates (`create-config.yaml`)
+    - Non-root operation support (auto-detects process owner)
 
 - **Compatibility**:
     - Built using Incus 6.20 API
@@ -345,6 +355,34 @@ ssh -p 2222 +app01+%base+%nodejs+ubuntu/24.04+m8+c4@1.2.3.4
 ```shell
 ssh -p 2222 ~prod:myvm.testing+ubuntu/24.04+m4+c4+d20+vm+nest+priv@1.2.3.4
 ```
+
+#### Instance Management
+
+Remove instance with confirmation:
+
+```shell
+ssh -p 2222 /rm/test01.default@1.2.3.4
+# or
+ssh -p 2222 /remove/test01.default@1.2.3.4
+```
+
+Force remove without confirmation:
+
+```shell
+ssh -p 2222 /rm-f/test01.default@1.2.3.4
+# or
+ssh -p 2222 /remove-force/test01.default@1.2.3.4
+```
+
+#### Login String Explanation
+
+Decode a complex login string to understand its components:
+
+```shell
+ssh -p 2222 /explain/%root@myinstance.project1@1.2.3.4
+```
+
+Output shows parsed remote, user, instance, project, and instance user details.
 
 ## Instance Creation
 

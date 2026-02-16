@@ -24,10 +24,41 @@ defaults:
         security.syscalls.intercept.setxattr: false
 
 profiles:
-    web-server-example:
-        image: ubuntu/22.04/cloud
-        memory: 2
-        cpu: 2
-        disk: 20
+    incus-nested:
+        image: ubuntu/noble/cloud
+        memory: 0
+        cpu: 0
+        disk: 0
         config:
-            cloud-init.user-data: <@web-server-init.example.yaml
+            security.privileged: true
+            security.nesting: true
+            cloud-init.user-data: <@cloud-init/incus-nested.yaml
+
+    ubuntu-docker:
+        image: ubuntu/noble/cloud
+        memory: 0
+        cpu: 0
+        disk: 0
+        config:
+            security.privileged: true
+            security.nesting: true
+            security.syscalls.intercept.mknod: true
+            security.syscalls.intercept.setxattr: true
+            cloud-init.user-data: <@cloud-init/ubuntu-docker.yaml
+
+    # ubuntu-dev-example:
+    #     image: ubuntu/24.04/cloud
+    #     memory: 4
+    #     cpu: 2
+    #     disk: 30
+    #     config:
+    #         security.nesting: true
+    #         cloud-init.user-data: <@cloud-init/ubuntu-dev-init.example.yaml
+
+    # web-server-example:
+    #     image: ubuntu/24.04/cloud
+    #     memory: 2
+    #     cpu: 2
+    #     disk: 20
+    #     config:
+    #         cloud-init.user-data: <@cloud-init/web-server-init.example.yaml

@@ -10,7 +10,7 @@ import (
 var idExe = "" // path to the 'id' program.
 
 func init() {
-	if path, err := exec.LookPath("/usr/bin/id"); err == nil {
+	if path, err := exec.LookPath("id"); err == nil {
 		idExe = path
 	} else {
 		log.Fatal(err)

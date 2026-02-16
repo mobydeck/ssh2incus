@@ -50,6 +50,9 @@ type LoginUser struct {
 	CreateInstance bool
 	CreateConfig   LoginCreateConfig
 	PublicKey      ssh.PublicKey
+	ExplainUser    *LoginUser
+	RemoveUser     *LoginUser
+	ForceRemove    bool
 
 	ctx ssh.Context
 }
@@ -141,9 +144,23 @@ func (lu *LoginUser) String() string {
 		persistent = PersistentSessionFlag
 	}
 	if lu.Command != "" {
-		return fmt.Sprintf("%%%s@%s", lu.Command, lu.User)
+		switch lu.Command {
+		case "explain":
+			if lu.ExplainUser != nil {
+				return fmt.Sprintf("%sexplain/%s", CommandShellFlag, lu.ExplainUser.String())
+			}
+		case "remove":
+			if lu.RemoveUser != nil {
+				cmd := "remove"
+				if lu.ForceRemove {
+					cmd = "remove-force"
+				}
+				return fmt.Sprintf("%s%s/%s", CommandShellFlag, cmd, lu.RemoveUser.String())
+			}
+		}
+		return fmt.Sprintf("%s%s@%s", CommandShellFlag, lu.Command, lu.User)
 	}
-	return fmt.Sprintf("%s%s%s@%s.%s+%s", remote, persistent, lu.InstanceUser, lu.Instance, lu.Project, lu.User)
+	return fmt.Sprintf("%s%s%s@%s.%s~%s", remote, persistent, lu.InstanceUser, lu.Instance, lu.Project, lu.User)
 }
 
 func (lu *LoginUser) FullInstance() string {
@@ -167,6 +184,10 @@ func (lu *LoginUser) IsValid() bool {
 	if lu.IsCommand() {
 		switch lu.Command {
 		case "shell":
+			return true
+		case "explain":
+			return true
+		case "remove":
 			return true
 		default:
 			return false
@@ -290,16 +311,37 @@ func checkShadowPassword(user, password string, shadowContent string) error {
 func getUserAuthKeys(u *user.User) ([][]byte, error) {
 	var keys [][]byte
 
-	f, err := os.Open(filepath.Clean(u.HomeDir + "/.ssh/authorized_keys"))
-	if err != nil {
-		return nil, err
+	// Try multiple locations for authorized_keys
+	authKeysPaths := []string{
+		filepath.Clean(u.HomeDir + "/.ssh/authorized_keys"),
+		filepath.Clean("/etc/ssh/authorized_keys.d/" + u.Username), // NixOS default
 	}
-	defer f.Close()
 
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		keys = append(keys, s.Bytes())
+	var lastErr error
+	for _, path := range authKeysPaths {
+		f, err := os.Open(path)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer f.Close()
+
+		s := bufio.NewScanner(f)
+		for s.Scan() {
+			keys = append(keys, s.Bytes())
+		}
+
+		// Successfully read at least one file
+		if len(keys) > 0 {
+			return keys, nil
+		}
 	}
+
+	// If we found no keys in any location, return the last error
+	if lastErr != nil {
+		return nil, lastErr
+	}
+
 	return keys, nil
 }
 
@@ -328,7 +370,19 @@ func (lu *LoginUser) ParseFrom(user string) {
 func (lu *LoginUser) setDefaults() {
 	lu.InstanceUser = "root"
 	lu.Project = "default"
-	lu.User = "root"
+
+	// Auto-detect the default user based on the process owner
+	// This allows ssh2incus to work when not running as root
+	if uid := os.Getuid(); uid == 0 {
+		lu.User = "root"
+	} else {
+		if u, err := user.LookupId(strconv.Itoa(uid)); err == nil {
+			lu.User = u.Username
+		} else {
+			// Fallback to root if lookup fails
+			lu.User = "root"
+		}
+	}
 }
 
 // isCreationFormat checks if the user string is in creation format (starts with + or ~)
@@ -357,11 +411,35 @@ func (lu *LoginUser) parseCreationFormat(user string) {
 	lu.parseCreateConfig(configStr)
 }
 
-// parseRegularFormat parses regular format: [%][remote:][instance-user@]instance-name[.project-name][[~|+]host-user]
+// parseRegularFormat parses regular format: [/%][remote:][instance-user@]instance-name[.project-name][[~|+]host-user]
 func (lu *LoginUser) parseRegularFormat(user string) {
 	// Handle commands
 	if cmd, ok := strings.CutPrefix(user, CommandShellFlag); ok {
-		lu.Command = cmd
+		// Split command and target: /command/target
+		parts := strings.SplitN(cmd, "/", 2)
+		if len(parts) < 2 {
+			// No slash after command, just the command itself
+			lu.Command = parts[0]
+		} else {
+			cmdName := parts[0]
+			target := parts[1]
+
+			switch cmdName {
+			case "explain":
+				lu.Command = "explain"
+				explainLu := &LoginUser{}
+				explainLu.ParseFrom(target)
+				lu.ExplainUser = explainLu
+			case "rm", "rm-f", "remove", "remove-force":
+				lu.Command = "remove"
+				lu.ForceRemove = cmdName == "rm-f" || cmdName == "remove-force"
+				removeLu := &LoginUser{}
+				removeLu.ParseFrom(target)
+				lu.RemoveUser = removeLu
+			default:
+				lu.Command = cmdName
+			}
+		}
 		lu.Instance = ""
 		lu.Project = ""
 		lu.InstanceUser = ""
@@ -399,6 +477,10 @@ func (lu *LoginUser) parseRemoteAndInstance(instance string) {
 
 // parseInstanceAndUser parses user@instance format
 func (lu *LoginUser) parseInstanceAndUser(instance string) {
+	// URL-decode @
+	instance = strings.ReplaceAll(instance, "%40", "@")
+	instance = strings.ReplaceAll(instance, "%2540", "@")
+
 	// Parse instance user and instance name
 	if u, i, ok := strings.Cut(instance, "@"); ok {
 		instance = i

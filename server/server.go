@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 
 	"ssh2incus/pkg/cron"
 	"ssh2incus/pkg/ssh"
+	"ssh2incus/web"
 
 	log "github.com/sirupsen/logrus"
 	gossh "golang.org/x/crypto/ssh"
@@ -80,12 +82,24 @@ func (s *Server) ListenAndServe() {
 		log.Errorf("clean leftover devices: %v", err)
 	}
 
-	// Start the server in a goroutine
+	// Start the SSH server in a goroutine
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, ssh.ErrServerClosed) {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
+
+	// Start the web server if enabled
+	var webServer *WebServer
+	if config.Web {
+		log.Infof("starting web server on %s", config.WebListen)
+		webServer = NewWebServer(config.WebListen, web.DistFS())
+		go func() {
+			if err := webServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("web server error: %v", err)
+			}
+		}()
+	}
 
 	// Wait for a signal to gracefully shutdown
 	<-stop
@@ -101,9 +115,16 @@ func (s *Server) ListenAndServe() {
 		log.Errorf("failed to shutdown devices: %v", err)
 	}
 
-	// Perform graceful shutdown
+	// Perform graceful shutdown of SSH server
 	if err = server.Shutdown(ctx); err != nil {
 		log.Fatalf("server shutdown failed: %v", err)
+	}
+
+	// Perform graceful shutdown of web server
+	if webServer != nil {
+		if err := webServer.Shutdown(ctx); err != nil {
+			log.Errorf("web server shutdown failed: %v", err)
+		}
 	}
 
 	log.Info("server gracefully stopped")
@@ -137,6 +158,18 @@ func (s *Server) Listen() {
 			go handoffToChild(conn)
 		}
 	}()
+
+	// Start the web server if enabled
+	var webServer *WebServer
+	if config.Web {
+		// log.Infof("starting web server on %s", config.WebListen)
+		webServer = NewWebServer(config.WebListen, web.DistFS())
+		go func() {
+			if err := webServer.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("web server error: %v", err)
+			}
+		}()
+	}
 
 	<-stop
 	log.Info("master server stopped")

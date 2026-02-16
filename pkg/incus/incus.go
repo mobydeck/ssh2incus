@@ -17,8 +17,9 @@ import (
 	"ssh2incus/pkg/queue"
 	"ssh2incus/pkg/util/structs"
 
-	"github.com/lxc/incus/v6/client"
+	incus "github.com/lxc/incus/v6/client"
 	"github.com/lxc/incus/v6/shared/api"
+	"github.com/lxc/incus/v6/shared/cliconfig"
 )
 
 var (
@@ -147,6 +148,86 @@ func (c *Client) GetConnectionInfo() map[string]interface{} {
 
 func (c *Client) Disconnect() {
 	c.srv.Disconnect()
+}
+
+// GetProjects returns all projects
+func (c *Client) GetProjects() ([]api.Project, error) {
+	return c.srv.GetProjects()
+}
+
+// ListProjects returns a list of available projects
+func (c *Client) ListProjects() ([]api.Project, error) {
+	return c.srv.GetProjects()
+}
+
+// ListImages returns a list of images from a remote
+func (c *Client) ListImages(remote string) ([]api.Image, error) {
+	if remote == "" {
+		remote = "images"
+	}
+
+	cc := cliconfig.Config{
+		Remotes: map[string]cliconfig.Remote{
+			"images": cliconfig.ImagesRemote,
+		},
+	}
+
+	imgServer, err := cc.GetImageServer(remote)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to images remote: %v", err)
+	}
+
+	// Get image aliases (which represent available images)
+	aliases, err := imgServer.GetImageAliases()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image aliases: %v", err)
+	}
+
+	// Convert aliases to image info
+	var images []api.Image
+	seen := make(map[string]bool)
+
+	for _, alias := range aliases {
+		// Skip duplicates (same fingerprint)
+		if seen[alias.Target] {
+			continue
+		}
+		seen[alias.Target] = true
+
+		// Get full image info
+		img, _, err := imgServer.GetImage(alias.Target)
+		if err != nil {
+			continue // Skip images we can't fetch
+		}
+		images = append(images, *img)
+	}
+
+	return images, nil
+}
+
+// InstanceExists checks if an instance exists in the specified project
+func (c *Client) InstanceExists(name, project string) (bool, error) {
+	err := c.UseProject(project)
+	if err != nil {
+		return false, err
+	}
+
+	_, _, err = c.srv.GetInstance(name)
+	if err == nil {
+		return true, nil
+	}
+
+	// Check if it's a "not found" error
+	if strings.Contains(err.Error(), "not found") {
+		return false, nil
+	}
+
+	return false, err
+}
+
+// GetInstanceServer returns the underlying InstanceServer for direct access
+func (c *Client) GetInstanceServer() incus.InstanceServer {
+	return c.srv
 }
 
 func IsDefaultProject(project string) bool {

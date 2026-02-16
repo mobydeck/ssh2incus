@@ -31,18 +31,20 @@ func init() {
 }
 
 type CreateInstanceParams struct {
-	Name       string                       `json:"name,omitempty"`
-	Project    string                       `json:"project,omitempty"`
-	Image      string                       `json:"image,omitempty"`
-	Memory     int                          `json:"memory,omitempty"`
-	CPU        int                          `json:"cpu,omitempty"`
-	Disk       int                          `json:"disk,omitempty"`
-	Ephemeral  bool                         `json:"ephemeral,omitempty"`
-	Nesting    bool                         `json:"nesting,omitempty"`
-	Privileged bool                         `json:"privileged,omitempty"`
-	VM         bool                         `json:"vm,omitempty"`
-	Config     map[string]string            `json:"config,omitempty"`
-	Devices    map[string]map[string]string `json:"devices,omitempty"`
+	Name        string                       `json:"name,omitempty"`
+	Project     string                       `json:"project,omitempty"`
+	Image       string                       `json:"image,omitempty"`
+	ImageRemote string                       `json:"-"`
+	Memory      int                          `json:"memory,omitempty"`
+	CPU         int                          `json:"cpu,omitempty"`
+	Disk        int                          `json:"disk,omitempty"`
+	Ephemeral   bool                         `json:"ephemeral,omitempty"`
+	Nesting     bool                         `json:"nesting,omitempty"`
+	Privileged  bool                         `json:"privileged,omitempty"`
+	VM          bool                         `json:"vm,omitempty"`
+	InitOnly    bool                         `json:"init_only,omitempty"`
+	Config      map[string]string            `json:"config,omitempty"`
+	Devices     map[string]map[string]string `json:"devices,omitempty"`
 }
 
 func (c *Client) CreateInstance(params CreateInstanceParams) (*api.Instance, error) {
@@ -109,27 +111,43 @@ func (c *Client) CreateInstance(params CreateInstanceParams) (*api.Instance, err
 		},
 	}
 
-	cc := cliconfig.Config{
-		Remotes: map[string]cliconfig.Remote{
-			"images": cliconfig.ImagesRemote,
-		},
-	}
-
-	// Create the container
-	var imgServer incus.ImageServer
 	var imgInfo *api.Image
-	imgServer, err = cc.GetImageServer("images")
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to images remote: %v", err)
-	}
+	var imgServer incus.ImageServer
 
-	imgAlias, _, err := imgServer.GetImageAlias(params.Image)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get image alias: %v", err)
-	}
-	imgInfo, _, err = imgServer.GetImage(imgAlias.Target)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get image info: %v", err)
+	if params.ImageRemote == "local" {
+		is := c.GetInstanceServer()
+		imgAlias, _, err := is.GetImageAlias(params.Image)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get image alias: %v", err)
+		}
+
+		imgInfo, _, err = is.GetImage(imgAlias.Target)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get image info: %v", err)
+		}
+
+		imgServer = is
+	} else {
+		cc := cliconfig.Config{
+			Remotes: map[string]cliconfig.Remote{
+				"images": cliconfig.ImagesRemote,
+			},
+		}
+
+		// Create the container
+		imgServer, err = cc.GetImageServer("images")
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to images remote: %v", err)
+		}
+
+		imgAlias, _, err := imgServer.GetImageAlias(params.Image)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get image alias: %v", err)
+		}
+		imgInfo, _, err = imgServer.GetImage(imgAlias.Target)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get image info: %v", err)
+		}
 	}
 
 	rop, err := c.srv.CreateInstanceFromImage(imgServer, *imgInfo, req)
@@ -142,22 +160,24 @@ func (c *Client) CreateInstance(params CreateInstanceParams) (*api.Instance, err
 		return nil, fmt.Errorf("failed to create instance: %v", err)
 	}
 
-	// Start the instance
-	startReq := api.InstanceStatePut{
-		Action:   "start",
-		Timeout:  -1,
-		Force:    false,
-		Stateful: false,
-	}
+	// Start the instance only if InitOnly is false
+	if !params.InitOnly {
+		startReq := api.InstanceStatePut{
+			Action:   "start",
+			Timeout:  -1,
+			Force:    false,
+			Stateful: false,
+		}
 
-	op, err := c.srv.UpdateInstanceState(params.Name, startReq, "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to start instance: %v", err)
-	}
+		op, err := c.srv.UpdateInstanceState(params.Name, startReq, "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to start instance: %v", err)
+		}
 
-	err = op.Wait()
-	if err != nil {
-		return nil, fmt.Errorf("failed to start instance: %v", err)
+		err = op.Wait()
+		if err != nil {
+			return nil, fmt.Errorf("failed to start instance: %v", err)
+		}
 	}
 
 	inst, _, err := c.GetInstance(params.Project, params.Name)
@@ -322,4 +342,23 @@ func mergeDevices(d1, d2 map[string]map[string]string) map[string]map[string]str
 	}
 
 	return result
+}
+
+// StopInstance stops an instance
+func (c *Client) StopInstance(project, name string, force bool) (incus.Operation, error) {
+	projectClient := c.srv.UseProject(project)
+
+	req := api.InstanceStatePut{
+		Action:  "stop",
+		Timeout: -1,
+		Force:   force,
+	}
+
+	return projectClient.UpdateInstanceState(name, req, "")
+}
+
+// DeleteInstance deletes an instance
+func (c *Client) DeleteInstance(project, name string) (incus.Operation, error) {
+	projectClient := c.srv.UseProject(project)
+	return projectClient.DeleteInstance(name)
 }

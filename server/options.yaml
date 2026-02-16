@@ -138,3 +138,17 @@
   type: duration
   help: idle session timeout duration, e.g. 180s or 5m
   default: "180s"
+- name: web-listen
+  short:
+  type: string
+  help: web server listen address
+  default: "127.0.0.1:2280"
+- name: web
+  short: W
+  type: boolean
+  help: enable web server
+  default: false
+- name: web-auth
+  type: string
+  help: enable basic http authentication for web console (comma-separated user:password values)
+  default: ""

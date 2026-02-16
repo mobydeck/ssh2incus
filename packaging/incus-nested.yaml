@@ -1,0 +1,84 @@
+#!/bin/bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo "Installing prerequisites..."
+apt-get update -q
+apt-get install -y -q curl gpg ca-certificates
+
+echo "Adding Incus repository..."
+mkdir -p /etc/apt/keyrings/
+curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
+
+cat > /etc/apt/sources.list.d/zabbly-incus.sources <<SOURCES_EOF
+Enabled: yes
+Types: deb
+URIs: https://pkgs.zabbly.com/incus/stable
+Suites: $(. /etc/os-release && echo ${VERSION_CODENAME})
+Components: main
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/zabbly.asc
+SOURCES_EOF
+
+echo "Installing Incus..."
+apt-get update -q
+apt-get install -y -q incus-base
+
+# Disable AppArmor in nested environment to prevent conflicts with container security profiles.
+# This is safe for development VMs but should NEVER be done on production hosts.
+echo "Disabling AppArmor to avoid kernel compatibility issues..."
+systemctl stop apparmor || true
+systemctl disable apparmor || true
+systemctl mask apparmor || true
+
+echo "Incus installed successfully!"
+
+echo "Starting Incus daemon..."
+systemctl enable --now incus.socket || true
+
+echo "Waiting for Incus to be ready..."
+# incus admin waitready exists on newer installs; fall back to a small loop if necessary.
+if incus admin waitready --timeout=60 >/dev/null 2>&1; then
+    echo "Incus admin reports ready"
+else
+    echo "Waiting for Incus socket by polling..."
+    for i in {1..30}; do
+        if incus info >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+fi
+
+IPV4=`printf "10.%d.%d.1" "$((RANDOM % 255))" "$((RANDOM % 255))"`
+
+echo "Initializing Incus..."
+cat <<PRESEED_EOF | incus admin init --preseed
+config:
+  core.https_address: "[::]:8443"
+networks:
+- name: incusbr0
+  type: bridge
+  config:
+    ipv4.address: $IPV4/24
+    ipv6.address: none
+storage_pools:
+- name: default
+  driver: dir
+profiles:
+- name: default
+  devices:
+    root:
+      path: /
+      pool: default
+      type: disk
+    eth0:
+      name: eth0
+      network: incusbr0
+      type: nic
+PRESEED_EOF
+
+echo "Incus configuration complete!"
+echo "Version: $(incus version || true)"
+echo "Listening on: $(incus config get core.https_address || true)"

@@ -9,7 +9,6 @@ node_modules/
 server/*/bin/
 /.*
 
-
 /ansible
 /web/dist
 Makefile

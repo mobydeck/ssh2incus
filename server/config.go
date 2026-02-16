@@ -42,6 +42,9 @@ type Config struct {
 	AllowedGroups []string
 	IdleTimeout   time.Duration
 	ConfigFile    string
+	WebListen     string
+	Web           bool
+	WebAuth       string
 
 	IncusInfo map[string]interface{}
 }

@@ -104,12 +104,17 @@ func buildCommandString(s ssh.Session, iu *incus.InstanceUser, remoteAddr string
 	return cmd, shouldRunAsUser
 }
 
-func checkTermMux(tmux *TermMux, c *incus.Client, lu *LoginUser, iu *incus.InstanceUser, env map[string]string) error {
+// TermMuxWriter interface allows sending messages to different connection types (SSH, WebSocket, etc.)
+type TermMuxWriter interface {
+	Write(p []byte) (n int, err error)
+}
+
+func checkTermMux(w TermMuxWriter, tmux *TermMux, c *incus.Client, lu *LoginUser, iu *incus.InstanceUser, env map[string]string) error {
 	existsParams := &incus.CommandExistsParams{
 		Project:     lu.Project,
 		Instance:    lu.Instance,
 		Path:        tmux.Name(),
-		ShouldCache: true,
+		ShouldCache: false,
 	}
 	if !c.CommandExists(existsParams) {
 		log.Debugf("command not found: %s", tmux.Name())
@@ -156,6 +161,8 @@ func checkTermMux(tmux *TermMux, c *incus.Client, lu *LoginUser, iu *incus.Insta
 		//	}
 		//
 		//} else {
+
+		fmt.Fprintf(w, "\r\ninstalling %s...\r\n\n", tmux.Name())
 		err := c.InstallPackages(lu.Project, lu.Instance, []string{tmux.Name()})
 		if err != nil {
 			return err
@@ -207,20 +214,32 @@ func shellHandler(s ssh.Session) {
 	lu := LoginUserFromContext(s.Context())
 	if !lu.IsValid() {
 		log.Warnf("invalid login for %s", lu)
-		io.WriteString(s, fmt.Sprintf("Invalid login for %q (%s)\n", lu.OrigUser, lu))
+		fmt.Fprintf(s, "invalid login for %q (%s)\r\n", lu.OrigUser, lu)
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
 
 	// Only root is allowed to access Incus shell
-	if lu.User == "root" && lu.Command == "shell" {
-		incusShell(s)
+	if lu.User == "root" {
+		switch lu.Command {
+		case "shell":
+			incusShell(s)
+			return
+		case "remove":
+			removeHandler(s)
+			return
+		}
+	}
+
+	// Handle explain command
+	if lu.Command == "explain" {
+		explainHandler(s)
 		return
 	}
 
 	if lu.IsCommand() {
 		log.Warnf("shell: command %q not allowed", lu)
-		io.WriteString(s, fmt.Sprintf("%%%s not allowed\n", lu.Command))
+		fmt.Fprintf(s, "\r\n/%s not allowed\r\n", lu.Command)
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
@@ -234,98 +253,105 @@ func shellHandler(s ssh.Session) {
 	defer client.Disconnect()
 
 	var iu *incus.InstanceUser
-	if lu.CreateInstance && config.AllowCreate {
-		iu, _ = client.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
+	if lu.CreateInstance {
+		if !config.AllowCreate {
+			fmt.Fprint(s, "\r\nInstance creation not allowed\r\n")
+			log.Debugf("shell: instance creation not allowed %s", lu)
+			s.Exit(ExitCodeInvalidLogin)
+			return
+		} else {
+			iu, _ = client.GetInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
 
-		// Only attempt to create an instance if it doesn't exist
-		if iu == nil {
-			log.Debugf("shell: creating instance %s", lu)
-			io.WriteString(s, "creating instance...\n")
+			// Only attempt to create an instance if it doesn't exist
+			if iu == nil {
+				log.Debugf("shell: creating instance %s", lu)
+				fmt.Fprint(s, "creating instance...\r\n")
 
-			home, _ := os.UserHomeDir()
-			cc, err := LoadCreateConfigWithFallback(
-				[]string{
-					"",
-					path.Join(home, ".config", config.App.Name()),
-					path.Join("/etc", config.App.Name()),
-				})
-			if err != nil {
-				log.Error(err)
-			}
-			err = cc.ApplyProfiles(lu.CreateConfig.Profiles)
-			if err != nil {
-				log.Errorf("shell: create config: %v", err)
-				io.WriteString(s, fmt.Sprintf("%s\n", err))
-				s.Exit(ExitCodeConnectionError)
-				return
-			}
+				home, _ := os.UserHomeDir()
+				cc, err := LoadCreateConfigWithFallback(
+					[]string{
+						"",
+						path.Join(home, ".config", config.App.Name()),
+						path.Join("/etc", config.App.Name()),
+					})
+				if err != nil {
+					log.Error(err)
+				}
+				err = cc.ApplyProfiles(lu.CreateConfig.Profiles)
+				if err != nil {
+					log.Errorf("shell: create config: %v", err)
+					fmt.Fprintf(s, "%s\r\n", err)
+					s.Exit(ExitCodeConnectionError)
+					return
+				}
 
-			params := incus.CreateInstanceParams{
-				Name:      lu.Instance,
-				Project:   lu.Project,
-				Image:     cc.Image(),
-				Memory:    cc.Memory(),
-				CPU:       cc.CPU(),
-				Disk:      cc.Disk(),
-				Ephemeral: cc.Ephemeral(),
-				VM:        cc.VM(),
-				Config:    cc.Config(),
-				Devices:   cc.Devices(),
-			}
+				params := incus.CreateInstanceParams{
+					Name:      lu.Instance,
+					Project:   lu.Project,
+					Image:     cc.Image(),
+					Memory:    cc.Memory(),
+					CPU:       cc.CPU(),
+					Disk:      cc.Disk(),
+					Ephemeral: cc.Ephemeral(),
+					VM:        cc.VM(),
+					Config:    cc.Config(),
+					Devices:   cc.Devices(),
+				}
 
-			if lu.CreateConfig.Image != nil {
-				params.Image = *lu.CreateConfig.Image
-			}
+				if lu.CreateConfig.Image != nil {
+					params.Image = *lu.CreateConfig.Image
+				}
 
-			if lu.CreateConfig.Memory != nil {
-				params.Memory = *lu.CreateConfig.Memory
-			}
+				if lu.CreateConfig.Memory != nil {
+					params.Memory = *lu.CreateConfig.Memory
+				}
 
-			if lu.CreateConfig.CPU != nil {
-				params.CPU = *lu.CreateConfig.CPU
-			}
+				if lu.CreateConfig.CPU != nil {
+					params.CPU = *lu.CreateConfig.CPU
+				}
 
-			if lu.CreateConfig.Disk != nil {
-				params.Disk = *lu.CreateConfig.Disk
-			}
+				if lu.CreateConfig.Disk != nil {
+					params.Disk = *lu.CreateConfig.Disk
+				}
 
-			if lu.CreateConfig.Ephemeral != nil {
-				params.Ephemeral = *lu.CreateConfig.Ephemeral
-			}
+				if lu.CreateConfig.Ephemeral != nil {
+					params.Ephemeral = *lu.CreateConfig.Ephemeral
+				}
 
-			if lu.CreateConfig.Nesting != nil {
-				params.Nesting = *lu.CreateConfig.Nesting
-			}
+				if lu.CreateConfig.Nesting != nil {
+					params.Nesting = *lu.CreateConfig.Nesting
+				}
 
-			if lu.CreateConfig.Privileged != nil {
-				params.Privileged = *lu.CreateConfig.Privileged
-			}
+				if lu.CreateConfig.Privileged != nil {
+					params.Privileged = *lu.CreateConfig.Privileged
+				}
 
-			if lu.CreateConfig.VM != nil {
-				params.VM = *lu.CreateConfig.VM
-			}
+				if lu.CreateConfig.VM != nil {
+					params.VM = *lu.CreateConfig.VM
+				}
 
-			if params.Ephemeral {
-				io.WriteString(s, "tip: run `sudo poweroff` to destroy ephemeral instance\n")
-			}
+				if params.Ephemeral {
+					fmt.Fprint(s, "\r\ntip: run `sudo poweroff` to destroy ephemeral instance\r\n")
+				}
 
-			log.Debugf("shell: create instance config: %+v", params)
+				log.Debugf("shell: create instance config: %+v", params)
 
-			_, err = client.CreateInstance(params)
-			if err != nil {
-				log.Warnf("shell: failed to create instance %s: %v", lu, err)
-				io.WriteString(s, fmt.Sprintf("cannot create instance:\n%s\n", err))
-				s.Exit(ExitCodeInternalError)
-				return
-			}
-			// try this if instance user is not root assuming that it needs to be created by cloud-init
-			if lu.InstanceUser != "root" {
-				for i := 0; i < 20; i++ {
-					sleep := time.Duration(i/10+1) * time.Second
-					time.Sleep(sleep)
-					iu, err := client.GetInstanceUser(params.Project, params.Name, lu.InstanceUser)
-					if iu != nil && err == nil {
-						break
+				_, err = client.CreateInstance(params)
+				if err != nil {
+					log.Warnf("shell: failed to create instance %s: %v", lu, err)
+					fmt.Fprintf(s, "\r\ncannot create instance:\r\n%s\r\n", err)
+					s.Exit(ExitCodeInternalError)
+					return
+				}
+				// try this if instance user is not root assuming that it needs to be created by cloud-init
+				if lu.InstanceUser != "root" {
+					for i := range 20 {
+						sleep := time.Duration(i/10+1) * time.Second
+						time.Sleep(sleep)
+						iu, err := client.GetInstanceUser(params.Project, params.Name, lu.InstanceUser)
+						if iu != nil && err == nil {
+							break
+						}
 					}
 				}
 			}
@@ -338,7 +364,7 @@ func shellHandler(s ssh.Session) {
 		iu, err = client.GetCachedInstanceUser(lu.Project, lu.Instance, lu.InstanceUser)
 		if err != nil {
 			log.Errorf("shell: failed to get instance user %q for %s: %s", lu.InstanceUser, lu, err)
-			io.WriteString(s, fmt.Sprintf("cannot get instance user %q\n", lu.InstanceUser))
+			fmt.Fprintf(s, "\r\ncannot get instance user %q\r\n", lu.InstanceUser)
 			s.Exit(ExitCodeInvalidLogin)
 			return
 		}
@@ -346,7 +372,7 @@ func shellHandler(s ssh.Session) {
 
 	if iu == nil {
 		log.Errorf("shell: not found instance user for %q", lu)
-		io.WriteString(s, fmt.Sprintf("not found user or instance for %q\n", lu))
+		fmt.Fprintf(s, "\r\nnot found user or instance for %q\r\n", lu)
 		s.Exit(ExitCodeInvalidLogin)
 		return
 	}
@@ -363,7 +389,7 @@ func shellHandler(s ssh.Session) {
 		al, err := ssh.NewAgentListener()
 		if err != nil {
 			log.Errorf("shell: failed to create agent listener: %v", err)
-			io.WriteString(s.Stderr(), "failed to setup agent\n")
+			fmt.Fprintf(s.Stderr(), "\r\nfailed to setup agent\r\n")
 		}
 
 		defer al.Close()
@@ -386,7 +412,7 @@ func shellHandler(s ssh.Session) {
 			}()
 		} else {
 			log.Errorf("shell: failed to add agent socket: %v", err)
-			io.WriteString(s.Stderr(), "failed to setup agent socket\n")
+			fmt.Fprintf(s.Stderr(), "\r\nfailed to setup agent socket\r\n")
 		}
 	}
 
@@ -402,12 +428,12 @@ func shellHandler(s ssh.Session) {
 		tmux, err := NewTermMux(s.Context(), config.TermMux, config.App.Name(), usePrefix)
 		if err != nil {
 			log.Errorf("shell: failed to initialize terminal mux: %v", err)
-			io.WriteString(s.Stderr(), "failed to create persistent session\n")
+			fmt.Fprintf(s.Stderr(), "\r\nfailed to create persistent session\r\n")
 		}
-		err = checkTermMux(tmux, client, lu, iu, env)
+		err = checkTermMux(s, tmux, client, lu, iu, env)
 		if err != nil {
 			log.Errorf("shell: failed to create persistent session: %v", err)
-			io.WriteString(s.Stderr(), fmt.Sprintf("failed to create persistent session:\n%s\n", err))
+			fmt.Fprintf(s.Stderr(), "\r\nfailed to create persistent session:\r\n%s\r\n", err)
 		}
 
 		shouldRunAsUser = true
@@ -419,7 +445,7 @@ func shellHandler(s ssh.Session) {
 	log.Debugf("shell: ENV %s", oneLine(util.MapToEnvString(env)))
 
 	if welcome := welcomeHandler(iu); config.Welcome && isPty && !isRaw && welcome != "" {
-		s.Write([]byte(fmt.Sprintf("\n%s\n\n", welcome)))
+		fmt.Fprintf(s, "\r\n%s\r\n\n", welcome)
 	}
 
 	// Setup I/O pipes
@@ -476,7 +502,7 @@ Type incus command:
 	args, err := shlex.Split(cmdString, true)
 	if err != nil {
 		log.Errorf("command parsing failed: %v", err)
-		io.WriteString(s, "Internal error: command parsing failed\n")
+		fmt.Fprintf(s, "Internal error: command parsing failed\r\n")
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
@@ -485,7 +511,7 @@ Type incus command:
 
 	ptyReq, winCh, isPty := s.Pty()
 	if !isPty {
-		io.WriteString(s, "No PTY requested\n")
+		fmt.Fprint(s, "No PTY requested\r\n")
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
@@ -511,17 +537,18 @@ Type incus command:
 	p, err := pty.Start(cmd)
 	if err != nil {
 		log.Errorf("incus shell: %v", err)
-		io.WriteString(s, "Could not allocate PTY\n")
+		fmt.Fprintf(s, "Could not allocate PTY\r\n")
 		s.Exit(-1)
 	}
 	defer p.Close()
 
 	hostname, _ := os.Hostname()
-	io.WriteString(s, fmt.Sprintf(`
+	fmt.Fprintf(s, `
 incus shell emulator on %s (Ctrl+C to exit)
 
 Hit ENTER or type 'help <command>' for help about any command
-`, hostname))
+`, hostname)
+
 	go func() {
 		for win := range winCh {
 			setWinsize(p, win.Width, win.Height)
@@ -546,10 +573,10 @@ Hit ENTER or type 'help <command>' for help about any command
 			}
 
 			// Check for Ctrl+C (ASCII value 3)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				if buf[i] == 3 {
 					log.Debugf("incus shell: received Ctrl+C, exiting")
-					io.WriteString(s, "\nExiting incus shell\n")
+					fmt.Fprint(s, "\r\nExiting incus shell\r\n")
 					cancel() // Signal other goroutines to exit
 					return
 				}
@@ -611,7 +638,7 @@ Type incus command:
 	args, err := shlex.Split(cmdString, true)
 	if err != nil {
 		log.Errorf("command parsing failed: %v", err)
-		io.WriteString(s, "Internal error: command parsing failed\n")
+		fmt.Fprint(s, "Internal error: command parsing failed\r\n")
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
@@ -620,7 +647,7 @@ Type incus command:
 
 	ptyReq, winCh, isPty := s.Pty()
 	if !isPty {
-		io.WriteString(s, "No PTY requested.\n")
+		fmt.Fprint(s, "No PTY requested.\r\n")
 		s.Exit(ExitCodeConnectionError)
 		return
 	}
@@ -642,12 +669,12 @@ Type incus command:
 	p, err := pty.Start(cmd)
 	if err != nil {
 		log.Errorf("incus shell: %v", err)
-		io.WriteString(s, "Could not allocate PTY\n")
+		fmt.Fprint(s, "Could not allocate PTY\r\n")
 		s.Exit(-1)
 	}
 	defer p.Close()
 
-	io.WriteString(s, `
+	fmt.Fprint(s, `
 incus shell emulator. Use Ctrl+c to exit
 
 Hit Enter or type 'help' for help
@@ -1024,4 +1051,244 @@ func (w *cleanupWriteCloser) Close() error {
 		w.cleanedUp = true
 	}
 	return w.WriteCloser.Close()
+}
+
+func explainHandler(s ssh.Session) {
+	lu := LoginUserFromContext(s.Context())
+	if lu.ExplainUser == nil {
+		fmt.Fprint(s, "Invalid explain command\r\n")
+		s.Exit(ExitCodeInvalidLogin)
+		return
+	}
+
+	eu := lu.ExplainUser
+	var o strings.Builder
+
+	o.WriteString("\r\n=== Login String Explanation ===\r\n\n")
+
+	if eu.Remote != "" {
+		fmt.Fprintf(&o, "Remote:          %s\r\n", eu.Remote)
+	}
+
+	fmt.Fprintf(&o, "Host User:       %s\r\n", eu.User)
+	fmt.Fprintf(&o, "Instance:        %s\r\n", eu.Instance)
+	fmt.Fprintf(&o, "Project:         %s\r\n", eu.Project)
+	fmt.Fprintf(&o, "Instance User:   %s\r\n", eu.InstanceUser)
+
+	if eu.Persistent {
+		fmt.Fprint(&o, "Persistent:      true (session persists across connections)\n")
+	}
+
+	if eu.CreateInstance {
+		fmt.Fprint(&o, "Create Instance: true\r\n")
+		if eu.CreateConfig.Image != nil {
+			fmt.Fprintf(&o, "  Image:         %s\r\n", *eu.CreateConfig.Image)
+		}
+		if eu.CreateConfig.Memory != nil {
+			fmt.Fprintf(&o, "  Memory:        %d MB\r\n", *eu.CreateConfig.Memory)
+		}
+		if eu.CreateConfig.CPU != nil {
+			fmt.Fprintf(&o, "  CPU:           %d cores\r\n", *eu.CreateConfig.CPU)
+		}
+		if eu.CreateConfig.Disk != nil {
+			fmt.Fprintf(&o, "  Disk:          %d GB\r\n", *eu.CreateConfig.Disk)
+		}
+		if eu.CreateConfig.Ephemeral != nil && *eu.CreateConfig.Ephemeral {
+			fmt.Fprint(&o, "  Ephemeral:     true (destroyed on poweroff)\r\n")
+		}
+		if eu.CreateConfig.Nesting != nil && *eu.CreateConfig.Nesting {
+			fmt.Fprint(&o, "  Nesting:       true\r\n")
+		}
+		if eu.CreateConfig.Privileged != nil && *eu.CreateConfig.Privileged {
+			fmt.Fprint(&o, "  Privileged:    true\r\n")
+		}
+		if eu.CreateConfig.VM != nil && *eu.CreateConfig.VM {
+			fmt.Fprint(&o, "  VM:            true\r\n")
+		}
+		if len(eu.CreateConfig.Profiles) > 0 {
+			fmt.Fprintf(&o, "  Profiles:      %v\r\n", eu.CreateConfig.Profiles)
+		}
+	}
+	fmt.Fprint(&o, "\r\n")
+
+	// Now print to ssh session
+	fmt.Fprint(s, o.String())
+	s.Exit(0)
+}
+
+func removeHandler(s ssh.Session) {
+	log := log.WithField("session", s.Context().ShortSessionID())
+	lu := LoginUserFromContext(s.Context())
+
+	// Check if RemoveUser is set
+	if lu.RemoveUser == nil {
+		fmt.Fprint(s, "Invalid remove command\r\n")
+		s.Exit(ExitCodeInvalidLogin)
+		return
+	}
+
+	// Only root host user is allowed to remove instances
+	if lu.User != "root" {
+		log.Warnf("remove: non-root user %q attempted to remove instance", lu.User)
+		fmt.Fprintf(s, "\r\nPermission denied: only root user can remove instances\r\n")
+		s.Exit(ExitCodeInvalidLogin)
+		return
+	}
+
+	ru := lu.RemoveUser
+
+	// Ensure remote is set
+	if ru.Remote == "" {
+		ru.Remote = config.Remote
+	}
+
+	// Create Incus client
+	client, err := NewDefaultIncusClientWithContext(s.Context())
+	if err != nil {
+		log.Errorf("remove: failed to create incus client: %v", err)
+		fmt.Fprintf(s, "\r\nFailed to connect to Incus: %v\r\n", err)
+		s.Exit(ExitCodeConnectionError)
+		return
+	}
+	defer client.Disconnect()
+
+	// Check if instance exists
+	instance, err := client.GetCachedInstance(ru.Project, ru.Instance)
+	if err != nil || instance == nil {
+		log.Errorf("remove: instance %s.%s not found: %v", ru.Instance, ru.Project, err)
+		fmt.Fprintf(s, "\r\nInstance %s.%s not found\r\n", ru.Instance, ru.Project)
+		s.Exit(ExitCodeInvalidLogin)
+		return
+	}
+
+	// Display instance information
+	var o strings.Builder
+	o.WriteString("\r\n=== Instance Details ===\r\n\n")
+	if ru.Remote != "" {
+		fmt.Fprintf(&o, "Remote:          %s\r\n", ru.Remote)
+	}
+	fmt.Fprintf(&o, "Instance:        %s\r\n", ru.Instance)
+	fmt.Fprintf(&o, "Project:         %s\r\n", ru.Project)
+	fmt.Fprintf(&o, "Status:          %s\r\n", instance.Status)
+	fmt.Fprintf(&o, "Type:            %s\r\n", instance.Type)
+	if instance.Ephemeral {
+		fmt.Fprint(&o, "Ephemeral:       yes\r\n")
+	}
+	fmt.Fprint(&o, "\r\n")
+
+	// Print instance info
+	fmt.Fprint(s, o.String())
+
+	// If force flag is set, skip confirmation
+	if !lu.ForceRemove {
+		// Ask for confirmation
+		fmt.Fprintf(s, "Are you sure you want to delete instance %s.%s? Type 'yes' to confirm: ", ru.Instance, ru.Project)
+
+		// Read user input
+		buf := make([]byte, 1024)
+		n, err := s.Read(buf)
+		if err != nil {
+			log.Errorf("remove: failed to read confirmation: %v", err)
+			fmt.Fprint(s, "\r\nCancelled\r\n")
+			s.Exit(0)
+			return
+		}
+
+		response := strings.TrimSpace(string(buf[:n]))
+		response = strings.TrimRight(response, "\r\n")
+
+		if strings.ToLower(response) != "yes" {
+			fmt.Fprint(s, "\r\nCancelled\r\n")
+			log.Infof("remove: user cancelled deletion of %s.%s", ru.Instance, ru.Project)
+			s.Exit(0)
+			return
+		}
+	}
+
+	// Stop instance if running
+	if instance.Status == "Running" {
+		fmt.Fprint(s, "\r\nStopping instance...\r\n")
+		stopCtx, stopCancel := context.WithTimeout(s.Context(), 60*time.Second)
+		defer stopCancel()
+
+		op, err := client.StopInstance(ru.Project, ru.Instance, false)
+		if err != nil {
+			log.Errorf("remove: failed to stop instance %s.%s: %v", ru.Instance, ru.Project, err)
+			fmt.Fprintf(s, "Failed to stop instance: %v\r\n", err)
+			s.Exit(ExitCodeInternalError)
+			return
+		}
+
+		// Wait for stop operation to complete
+		err = op.WaitContext(stopCtx)
+		if err != nil {
+			log.Errorf("remove: stop instance %s.%s failed: %v", ru.Instance, ru.Project, err)
+			fmt.Fprintf(s, "Failed to stop instance: %v\r\n", err)
+			s.Exit(ExitCodeInternalError)
+			return
+		}
+
+		// If ephemeral, stopping automatically deletes it
+		// Wait for it to be gone
+		if instance.Ephemeral {
+			fmt.Fprint(s, "Waiting for ephemeral instance to be deleted...\r\n")
+
+			// Poll until instance no longer exists
+			waitCtx, waitCancel := context.WithTimeout(s.Context(), 30*time.Second)
+			defer waitCancel()
+
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-waitCtx.Done():
+					log.Errorf("remove: timeout waiting for ephemeral instance %s.%s to be deleted", ru.Instance, ru.Project)
+					fmt.Fprint(s, "Timeout waiting for instance to be deleted\r\n")
+					s.Exit(ExitCodeInternalError)
+					return
+				case <-ticker.C:
+					exists, err := client.InstanceExists(ru.Instance, ru.Project)
+					if err != nil {
+						log.Errorf("remove: error checking instance existence: %v", err)
+						continue
+					}
+					if !exists {
+						// Instance is gone, success!
+						fmt.Fprintf(s, "\r\nEphemeral instance %s.%s deleted successfully\r\n", ru.Instance, ru.Project)
+						log.Infof("remove: successfully deleted ephemeral instance %s.%s", ru.Instance, ru.Project)
+						s.Exit(0)
+						return
+					}
+				}
+			}
+		}
+	}
+
+	// Delete the instance (non-ephemeral)
+	fmt.Fprint(s, "Deleting instance...\r\n")
+	deleteCtx, deleteCancel := context.WithTimeout(s.Context(), 60*time.Second)
+	defer deleteCancel()
+
+	deleteOp, err := client.DeleteInstance(ru.Project, ru.Instance)
+	if err != nil {
+		log.Errorf("remove: failed to delete instance %s.%s: %v", ru.Instance, ru.Project, err)
+		fmt.Fprintf(s, "Failed to delete instance: %v\r\n", err)
+		s.Exit(ExitCodeInternalError)
+		return
+	}
+
+	// Wait for delete operation to complete
+	err = deleteOp.WaitContext(deleteCtx)
+	if err != nil {
+		log.Errorf("remove: delete instance %s.%s failed: %v", ru.Instance, ru.Project, err)
+		fmt.Fprintf(s, "Failed to delete instance: %v\r\n", err)
+		s.Exit(ExitCodeInternalError)
+		return
+	}
+
+	// Success
+	fmt.Fprintf(s, "\r\nInstance %s.%s deleted successfully\r\n", ru.Instance, ru.Project)
+	log.Infof("remove: successfully deleted instance %s.%s", ru.Instance, ru.Project)
+	s.Exit(0)
 }

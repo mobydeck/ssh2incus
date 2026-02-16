@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.10 — 2026-02-15
+
+### Added
+
+- **Instance Removal via SSH**: Delete instances using `ssh /rm/instance.project@host` or `ssh /remove/instance.project@host` commands
+  - Force deletion with `/rm-f/` or `/remove-force/` to skip confirmation
+  - Requires root host user for security
+  - Automatically handles ephemeral instance cleanup
+  - Shows instance details before confirmation
+
+- **Login String Explanation**: New `/explain/` command decodes complex login strings
+  - Example: `ssh /explain/root@myinstance.default@host` shows parsed components
+  - Helps troubleshooting and onboarding
+
+### Improved
+
+- **NixOS Compatibility**: SSH authentication now checks `/etc/ssh/authorized_keys.d/<user>` in addition to `~/.ssh/authorized_keys`
+- **Non-Root Operation**: Auto-detects process owner instead of hardcoding "root" as default host user for authentication
+- **Web UI Reliability**: Fixed empty instance list display when no containers are running
+- **Image Selection**: Web UI now supports selecting images from local or remote repositories
+- **OS Detection**: Enhanced OS detection for better web UI display of instance information
+- **Config Viewer**: Read-only CodeMirror modal for viewing multi-line configuration values
+- **Terminal Font**: Bundled monospace nerd font for consistent terminal/editor rendering
+
+### Changed
+
+- **Web Dependencies**: Updated to latest versions for improved security and features
+
 ## v0.9 — 2025-12-23
 
 ### Added

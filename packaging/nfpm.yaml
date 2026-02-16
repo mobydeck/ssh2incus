@@ -36,9 +36,20 @@ contents:
       type: config|noreplace
       expand: true
 
+    - src: ./packaging/incus-nested.yaml
+      dst: /etc/${name}/cloud-init/incus-nested.yaml
+      expand: true
+
+    - src: ./packaging/ubuntu-docker.yaml
+      dst: /etc/${name}/cloud-init/ubuntu-docker.yaml
+      expand: true
+
+    - src: ./packaging/ubuntu-dev-init.example.yaml
+      dst: /etc/${name}/cloud-init/ubuntu-dev-init.example.yaml
+      expand: true
+
     - src: ./packaging/web-server-init.example.yaml
-      dst: /etc/${name}/web-server-init.example.yaml
-      type: config
+      dst: /etc/${name}/cloud-init/web-server-init.example.yaml
       expand: true
 
     - src: ./packaging/banner.txt.example

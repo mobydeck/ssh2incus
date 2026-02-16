@@ -71,6 +71,15 @@
 # Incus remote url to connect to (should start with https://) (flag: --url, -u).
 # url: ""
 
+# Enable web server (flag: --web, -W).
+# web: false
+
+# Enable basic http authentication for web console (comma-separated user:password values) (flag: --web-auth).
+# web-auth: ""
+
+# Web server listen address (flag: --web-listen).
+# web-listen: "127.0.0.1:2280"
+
 # Show welcome message to users connecting to shell (flag: --welcome, -w).
 # welcome: false
 

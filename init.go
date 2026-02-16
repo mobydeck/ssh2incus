@@ -213,6 +213,9 @@ func init() {
 		Pprof:         viper.GetBool("pprof"),
 		PprofListen:   viper.GetString("pprof-listen"),
 		ConfigFile:    viper.ConfigFileUsed(),
+		Web:           viper.GetBool("web"),
+		WebListen:     viper.GetString("web-listen"),
+		WebAuth:       viper.GetString("web-auth"),
 	}
 
 	server.WithConfig(config).Run()

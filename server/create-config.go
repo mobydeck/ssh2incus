@@ -152,6 +152,77 @@ func processIncludes(configMap map[string]string, configDir string) error {
 	return nil
 }
 
+// MergeProfiles merges the specified profiles with defaults and returns the result
+// without modifying the receiver's state
+func (c *CreateConfig) MergeProfiles(profiles []string) (InstanceCreateConfig, error) {
+	result := c.Defaults
+
+	if len(profiles) == 0 {
+		return result, nil
+	}
+
+	for _, name := range profiles {
+		if name == "" {
+			continue
+		}
+		profile, ok := c.Profiles[name]
+		if !ok {
+			return InstanceCreateConfig{}, fmt.Errorf("profile %q does not exist", name)
+		}
+
+		if profile.Image != nil {
+			result.Image = profile.Image
+		}
+		if profile.Ephemeral != nil {
+			result.Ephemeral = profile.Ephemeral
+		}
+		if profile.Memory != nil {
+			result.Memory = profile.Memory
+		}
+		if profile.CPU != nil {
+			result.CPU = profile.CPU
+		}
+		if profile.Disk != nil {
+			result.Disk = profile.Disk
+		}
+		if profile.VM != nil {
+			result.VM = profile.VM
+		}
+
+		if profile.Config != nil {
+			if result.Config == nil {
+				result.Config = make(map[string]string)
+			}
+			for k, v := range profile.Config {
+				result.Config[k] = v
+			}
+		}
+
+		if profile.Devices != nil {
+			if result.Devices == nil {
+				result.Devices = make(map[string]map[string]string)
+			}
+			for deviceName, deviceConfig := range profile.Devices {
+				if deviceConfig == nil {
+					continue
+				}
+				cloned := make(map[string]string, len(deviceConfig))
+				for k, v := range deviceConfig {
+					cloned[k] = v
+				}
+				result.Devices[deviceName] = cloned
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// GetProfiles returns all available profiles from the create config
+func (c *CreateConfig) GetProfiles() map[string]InstanceCreateConfig {
+	return c.Profiles
+}
+
 // LoadCreateConfig loads the instance config from a YAML file.
 func LoadCreateConfig(path string) (*CreateConfig, error) {
 	file, err := os.Open(path)
